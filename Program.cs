@@ -1,9 +1,11 @@
 using ChampionsLeagueSimulatorAPI.Data;
+using ChampionsLeagueSimulatorAPI.Services;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
+builder.Services.AddScoped<TableService>();
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
