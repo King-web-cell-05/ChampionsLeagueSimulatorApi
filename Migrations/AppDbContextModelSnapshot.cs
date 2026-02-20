@@ -149,7 +149,7 @@ namespace ChampionsLeagueSimulatorApi.Migrations
                     b.HasOne("ChampionsLeagueSimulatorAPI.Entities.Team", "AwayTeam")
                         .WithMany()
                         .HasForeignKey("AwayTeamId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
 
                     b.HasOne("ChampionsLeagueSimulatorAPI.Entities.Competition", "Competition")
@@ -161,7 +161,7 @@ namespace ChampionsLeagueSimulatorApi.Migrations
                     b.HasOne("ChampionsLeagueSimulatorAPI.Entities.Team", "HomeTeam")
                         .WithMany()
                         .HasForeignKey("HomeTeamId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
 
                     b.Navigation("AwayTeam");

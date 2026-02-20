@@ -12,7 +12,7 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace ChampionsLeagueSimulatorApi.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20260220060819_AddCompetitionMatchStanding")]
+    [Migration("20260220061441_AddCompetitionMatchStanding")]
     partial class AddCompetitionMatchStanding
     {
         /// <inheritdoc />
@@ -152,7 +152,7 @@ namespace ChampionsLeagueSimulatorApi.Migrations
                     b.HasOne("ChampionsLeagueSimulatorAPI.Entities.Team", "AwayTeam")
                         .WithMany()
                         .HasForeignKey("AwayTeamId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
 
                     b.HasOne("ChampionsLeagueSimulatorAPI.Entities.Competition", "Competition")
@@ -164,7 +164,7 @@ namespace ChampionsLeagueSimulatorApi.Migrations
                     b.HasOne("ChampionsLeagueSimulatorAPI.Entities.Team", "HomeTeam")
                         .WithMany()
                         .HasForeignKey("HomeTeamId")
-                        .OnDelete(DeleteBehavior.Cascade)
+                        .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
 
                     b.Navigation("AwayTeam");

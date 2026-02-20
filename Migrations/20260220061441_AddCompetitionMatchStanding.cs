@@ -77,14 +77,12 @@ namespace ChampionsLeagueSimulatorApi.Migrations
                         name: "FK_Matches_Teams_AwayTeamId",
                         column: x => x.AwayTeamId,
                         principalTable: "Teams",
-                        principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
+                        principalColumn: "Id");
                     table.ForeignKey(
                         name: "FK_Matches_Teams_HomeTeamId",
                         column: x => x.HomeTeamId,
                         principalTable: "Teams",
-                        principalColumn: "Id",
-                        onDelete: ReferentialAction.Cascade);
+                        principalColumn: "Id");
                 });
 
             migrationBuilder.CreateIndex(
