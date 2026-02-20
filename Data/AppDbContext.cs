@@ -17,4 +17,20 @@ public class AppDbContext : DbContext
     public DbSet<Match> Matches => Set<Match>();
 
     public DbSet<Standing> Standings => Set<Standing>();
+
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<Match>()
+            .HasOne(m => m.HomeTeam)
+            .WithMany()
+            .HasForeignKey(m => m.HomeTeamId)
+            .OnDelete(DeleteBehavior.NoAction);
+
+        modelBuilder.Entity<Match>()
+            .HasOne(m => m.AwayTeam)
+            .WithMany()
+            .HasForeignKey(m => m.AwayTeamId)
+            .OnDelete(DeleteBehavior.NoAction);
+    }
 }
