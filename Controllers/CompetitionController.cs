@@ -1,7 +1,9 @@
-﻿using Microsoft.AspNetCore.Mvc;
-using ChampionsLeagueSimulatorAPI.Data;
+﻿using ChampionsLeagueSimulatorAPI.Data;
+using ChampionsLeagueSimulatorAPI.DTOs;
 using ChampionsLeagueSimulatorAPI.Entities;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+
 
 namespace ChampionsLeagueSimulatorAPI.Controllers;
 
@@ -16,19 +18,19 @@ public class CompetitionController : ControllerBase
         _context = context;
     }
 
-    [HttpPost]
-    public async Task<IActionResult> CreateCompetition(Competition competition)
+
+[HttpPost]
+public async Task<IActionResult> CreateCompetition(CreateCompetitionRequest request)
+{
+    var competition = new Competition
     {
-        _context.Competitions.Add(competition);
+        Id = Guid.NewGuid(),
+        Name = request.Name
+    };
 
-        await _context.SaveChangesAsync();
+    _context.Competitions.Add(competition);
+    await _context.SaveChangesAsync();
 
-        return Ok(competition);
-    }
-
-    [HttpGet]
-    public async Task<IActionResult> GetCompetitions()
-    {
-        return Ok(await _context.Competitions.ToListAsync());
-    }
+    return Ok(competition);
+}
 }
