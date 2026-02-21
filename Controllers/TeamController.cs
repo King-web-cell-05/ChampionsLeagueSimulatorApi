@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using ChampionsLeagueSimulatorAPI.Data;
 using ChampionsLeagueSimulatorAPI.Entities;
+using ChampionsLeagueSimulatorAPI.DTOs;
 using Microsoft.EntityFrameworkCore;
 
 namespace ChampionsLeagueSimulatorAPI.Controllers;
@@ -17,9 +18,16 @@ public class TeamsController : ControllerBase
     }
 
     [HttpPost]
-    public async Task<IActionResult> CreateTeam(Team team)
+    public async Task<IActionResult> CreateTeam(CreateTeamRequest request)
     {
+        var team = new Team
+        {
+            Id = Guid.NewGuid(),
+            Name = request.Name
+        };
+
         _context.Teams.Add(team);
+
         await _context.SaveChangesAsync();
 
         return Ok(team);
