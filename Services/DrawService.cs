@@ -19,6 +19,7 @@ public class DrawService
         var teams = await _context.CompetitionTeams
             .Where(ct => ct.CompetitionId == competitionId)
             .Select(ct => ct.Team)
+            .Distinct()
             .ToListAsync();
 
         if (teams.Count < 2)
@@ -26,7 +27,9 @@ public class DrawService
 
         var matches = new List<Match>();
 
-        var shuffled = teams.OrderBy(x => _random.Next()).ToList();
+        var shuffled = teams
+            .OrderBy(x => _random.Next())
+            .ToList();
 
         int matchDay = 1;
 
@@ -34,6 +37,9 @@ public class DrawService
         {
             for (int j = i + 1; j < shuffled.Count; j++)
             {
+                if (shuffled[i].Id == shuffled[j].Id)
+                    continue;
+
                 matches.Add(new Match
                 {
                     Id = Guid.NewGuid(),
