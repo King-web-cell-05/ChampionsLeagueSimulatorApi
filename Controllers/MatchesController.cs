@@ -22,6 +22,9 @@ public class MatchesController : ControllerBase
     {
         var matches = await _context.Matches
             .Where(x => x.CompetitionId == competitionId)
+            .Include(x => x.HomeTeam)
+            .Include(x => x.AwayTeam)
+            .Include(x => x.Competition)
             .ToListAsync();
 
         return Ok(matches);
