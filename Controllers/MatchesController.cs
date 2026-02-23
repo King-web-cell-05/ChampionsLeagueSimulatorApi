@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using ChampionsLeagueSimulatorAPI.Data;
+using ChampionsLeagueSimulatorAPI.DTOs;
 using Microsoft.EntityFrameworkCore;
 
 namespace ChampionsLeagueSimulatorAPI.Controllers;
@@ -24,12 +25,27 @@ public class MatchesController : ControllerBase
             .Where(x => x.CompetitionId == competitionId)
             .Include(x => x.HomeTeam)
             .Include(x => x.AwayTeam)
-            .Include(x => x.Competition)
+            .OrderBy(x => x.MatchDay)
+            .Select(x => new MatchDto
+            {
+                Id = x.Id,
+
+                MatchDay = x.MatchDay,
+
+                HomeTeam = x.HomeTeam.Name,
+
+                AwayTeam = x.AwayTeam.Name,
+
+                HomeScore = x.HomeScore,
+
+                AwayScore = x.AwayScore,
+
+                IsPlayed = x.IsPlayed
+            })
             .ToListAsync();
 
         return Ok(matches);
     }
-
 
     // existing manual result endpoint
     [HttpPost("{matchId}/result")]
