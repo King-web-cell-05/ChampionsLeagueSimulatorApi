@@ -7,7 +7,6 @@ namespace ChampionsLeagueSimulatorAPI.Services;
 public class DrawService
 {
     private readonly AppDbContext _context;
-    private readonly Random _random = new();
 
     public DrawService(AppDbContext context)
     {
@@ -16,44 +15,60 @@ public class DrawService
 
     public async Task GenerateDraw(Guid competitionId)
     {
+        // Get all teams for the competition
         var teams = await _context.CompetitionTeams
             .Where(ct => ct.CompetitionId == competitionId)
             .Select(ct => ct.Team)
-            .Distinct()
             .ToListAsync();
 
         if (teams.Count < 2)
-            throw new Exception("Not enough teams");
+            throw new Exception("Not enough teams to generate a draw");
+
+        // If odd number of teams, add a dummy "bye" team
+        bool hasBye = false;
+        if (teams.Count % 2 != 0)
+        {
+            teams.Add(new Team { Id = Guid.Empty, Name = "BYE" });
+            hasBye = true;
+        }
 
         var matches = new List<Match>();
+        int totalTeams = teams.Count;
+        int totalRounds = totalTeams - 1;
+        int matchesPerRound = totalTeams / 2;
 
-        var shuffled = teams
-            .OrderBy(x => _random.Next())
-            .ToList();
+        // Create a copy to rotate
+        var shuffled = new List<Team>(teams);
 
-        int matchDay = 1;
-
-        for (int i = 0; i < shuffled.Count; i++)
+        for (int round = 0; round < totalRounds; round++)
         {
-            for (int j = i + 1; j < shuffled.Count; j++)
+            for (int i = 0; i < matchesPerRound; i++)
             {
-                if (shuffled[i].Id == shuffled[j].Id)
+                var home = shuffled[i];
+                var away = shuffled[totalTeams - 1 - i];
+
+                // Skip matches with BYE
+                if (home.Id == Guid.Empty || away.Id == Guid.Empty)
                     continue;
 
                 matches.Add(new Match
                 {
                     Id = Guid.NewGuid(),
                     CompetitionId = competitionId,
-                    HomeTeamId = shuffled[i].Id,
-                    AwayTeamId = shuffled[j].Id,
-                    MatchDay = matchDay++,
+                    HomeTeamId = home.Id,
+                    AwayTeamId = away.Id,
+                    MatchDay = round + 1,
                     IsPlayed = false
                 });
             }
+
+            // Rotate teams except the first one
+            var last = shuffled.Last();
+            shuffled.RemoveAt(shuffled.Count - 1);
+            shuffled.Insert(1, last);
         }
 
         _context.Matches.AddRange(matches);
-
         await _context.SaveChangesAsync();
     }
 }
