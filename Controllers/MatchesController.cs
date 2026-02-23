@@ -15,7 +15,20 @@ public class MatchesController : ControllerBase
         _context = context;
     }
 
-    // Manual result entry (existing)
+
+    // ✅ GET all matches for a competition
+    [HttpGet("competition/{competitionId}")]
+    public async Task<IActionResult> GetMatches(Guid competitionId)
+    {
+        var matches = await _context.Matches
+            .Where(x => x.CompetitionId == competitionId)
+            .ToListAsync();
+
+        return Ok(matches);
+    }
+
+
+    // existing manual result endpoint
     [HttpPost("{matchId}/result")]
     public async Task<IActionResult> AddResult(Guid matchId, int homeScore, int awayScore)
     {
@@ -26,26 +39,6 @@ public class MatchesController : ControllerBase
 
         match.HomeScore = homeScore;
         match.AwayScore = awayScore;
-        match.IsPlayed = true;
-
-        await _context.SaveChangesAsync();
-
-        return Ok(match);
-    }
-
-    // NEW — Automatic simulation
-    [HttpPost("simulate/{matchId}")]
-    public async Task<IActionResult> SimulateMatch(Guid matchId)
-    {
-        var match = await _context.Matches.FindAsync(matchId);
-
-        if (match == null)
-            return NotFound();
-
-        var random = new Random();
-
-        match.HomeScore = random.Next(0, 5);
-        match.AwayScore = random.Next(0, 5);
         match.IsPlayed = true;
 
         await _context.SaveChangesAsync();
