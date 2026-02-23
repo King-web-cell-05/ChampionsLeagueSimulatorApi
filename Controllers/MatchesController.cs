@@ -22,13 +22,29 @@ public class MatchesController : ControllerBase
     public async Task<IActionResult> GetMatches(Guid competitionId)
     {
         var matches = await _context.Matches
-            .Where(x => x.CompetitionId == competitionId)
-            .Include(x => x.Competition)
-            .Include(x => x.HomeTeam)
-            .Include(x => x.AwayTeam)
+            .Where(m => m.CompetitionId == competitionId)
+            .Include(m => m.HomeTeam)
+            .Include(m => m.AwayTeam)
+            .Include(m => m.Competition)
+            .OrderBy(m => m.MatchDay)
             .ToListAsync();
 
-        return Ok(matches);
+        var result = matches.Select(m => new MatchDto
+        {
+            Id = m.Id,
+            CompetitionId = m.CompetitionId,
+            CompetitionName = m.Competition?.Name ?? "Unknown",
+            HomeTeamId = m.HomeTeamId,
+            HomeTeamName = m.HomeTeam?.Name ?? "Unknown",
+            AwayTeamId = m.AwayTeamId,
+            AwayTeamName = m.AwayTeam?.Name ?? "Unknown",
+            HomeScore = m.HomeScore,
+            AwayScore = m.AwayScore,
+            IsPlayed = m.IsPlayed,
+            MatchDay = m.MatchDay
+        }).ToList();
+
+        return Ok(result);
     }
 
     // existing manual result endpoint

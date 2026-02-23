@@ -15,60 +15,37 @@ public class DrawService
 
     public async Task GenerateDraw(Guid competitionId)
     {
-        // Get all teams for the competition
+        // Load teams with their names
         var teams = await _context.CompetitionTeams
             .Where(ct => ct.CompetitionId == competitionId)
+            .Include(ct => ct.Team)
             .Select(ct => ct.Team)
             .ToListAsync();
 
         if (teams.Count < 2)
-            throw new Exception("Not enough teams to generate a draw");
-
-        // If odd number of teams, add a dummy "bye" team
-        bool hasBye = false;
-        if (teams.Count % 2 != 0)
-        {
-            teams.Add(new Team { Id = Guid.Empty, Name = "BYE" });
-            hasBye = true;
-        }
+            throw new Exception("Not enough teams");
 
         var matches = new List<Match>();
-        int totalTeams = teams.Count;
-        int totalRounds = totalTeams - 1;
-        int matchesPerRound = totalTeams / 2;
 
-        // Create a copy to rotate
-        var shuffled = new List<Team>(teams);
-
-        for (int round = 0; round < totalRounds; round++)
+        // Round-robin style scheduling
+        int matchDay = 1;
+        for (int i = 0; i < teams.Count; i++)
         {
-            for (int i = 0; i < matchesPerRound; i++)
+            for (int j = i + 1; j < teams.Count; j++)
             {
-                var home = shuffled[i];
-                var away = shuffled[totalTeams - 1 - i];
-
-                // Skip matches with BYE
-                if (home.Id == Guid.Empty || away.Id == Guid.Empty)
-                    continue;
-
                 matches.Add(new Match
                 {
                     Id = Guid.NewGuid(),
                     CompetitionId = competitionId,
-                    HomeTeamId = home.Id,
-                    AwayTeamId = away.Id,
-                    MatchDay = round + 1,
+                    HomeTeamId = teams[i].Id,
+                    AwayTeamId = teams[j].Id,
+                    MatchDay = matchDay++,
                     IsPlayed = false
                 });
             }
-
-            // Rotate teams except the first one
-            var last = shuffled.Last();
-            shuffled.RemoveAt(shuffled.Count - 1);
-            shuffled.Insert(1, last);
         }
 
-        _context.Matches.AddRange(matches);
-        await _context.SaveChangesAsync();
+        await _context.Matches.AddRangeAsync(matches);
+        await _context.SaveChangesAsync(); // <-- use await
     }
 }
