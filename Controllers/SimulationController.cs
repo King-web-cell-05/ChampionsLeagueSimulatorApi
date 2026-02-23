@@ -14,12 +14,11 @@ public class SimulationController : ControllerBase
         _simulationService = simulationService;
     }
 
-
     [HttpPost("{competitionId}")]
-    public async Task<IActionResult> Simulate(Guid competitionId)
+    public async Task<IActionResult> SimulateCompetition(Guid competitionId)
     {
-        await _simulationService.SimulateCompetition(competitionId);
+        var matches = await _simulationService.SimulateCompetition(competitionId);
 
-        return Ok("Competition simulated successfully");
+        return Ok(matches);
     }
 }

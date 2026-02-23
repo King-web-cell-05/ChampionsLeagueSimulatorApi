@@ -15,7 +15,7 @@ public class SimulationService
     }
 
 
-    public async Task SimulateCompetition(Guid competitionId)
+    public async Task<List<Match>> SimulateCompetition(Guid competitionId)
     {
         var matches = await _context.Matches
             .Where(x => x.CompetitionId == competitionId && !x.IsPlayed)
@@ -24,13 +24,13 @@ public class SimulationService
         foreach (var match in matches)
         {
             match.HomeScore = GenerateGoals();
-
             match.AwayScore = GenerateGoals();
-
             match.IsPlayed = true;
         }
 
         await _context.SaveChangesAsync();
+
+        return matches;
     }
 
 
