@@ -64,4 +64,17 @@ public class MatchesController : ControllerBase
 
         return Ok(match);
     }
+    [HttpDelete("competition/{competitionId}")]
+    public async Task<IActionResult> DeleteMatchesByCompetition(Guid competitionId)
+    {
+        var matches = _context.Matches.Where(m => m.CompetitionId == competitionId);
+
+        if (!matches.Any())
+            return NotFound("No matches found for this competition");
+
+        _context.Matches.RemoveRange(matches);
+        await _context.SaveChangesAsync();
+
+        return Ok($"All matches for competition {competitionId} have been deleted.");
+    }
 }
