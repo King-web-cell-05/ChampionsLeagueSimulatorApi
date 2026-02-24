@@ -7,18 +7,18 @@ namespace ChampionsLeagueSimulatorAPI.Services;
 public class DrawService
 {
     private readonly AppDbContext _context;
+    private readonly Random _random = new();
 
     public DrawService(AppDbContext context)
     {
         _context = context;
     }
 
-    public async Task GenerateDraw(Guid competitionId)
+    public async Task<List<Match>> GenerateDraw(Guid competitionId)
     {
-        // Load teams with their names
         var teams = await _context.CompetitionTeams
             .Where(ct => ct.CompetitionId == competitionId)
-            .Include(ct => ct.Team)
+            .Include(ct => ct.Team) // ✅ CRITICAL FIX
             .Select(ct => ct.Team)
             .ToListAsync();
 
@@ -27,25 +27,39 @@ public class DrawService
 
         var matches = new List<Match>();
 
-        // Round-robin style scheduling
+        var shuffled = teams
+            .OrderBy(x => _random.Next())
+            .ToList();
+
         int matchDay = 1;
-        for (int i = 0; i < teams.Count; i++)
+
+        for (int i = 0; i < shuffled.Count; i++)
         {
-            for (int j = i + 1; j < teams.Count; j++)
+            for (int j = i + 1; j < shuffled.Count; j++)
             {
                 matches.Add(new Match
                 {
                     Id = Guid.NewGuid(),
+
                     CompetitionId = competitionId,
-                    HomeTeamId = teams[i].Id,
-                    AwayTeamId = teams[j].Id,
-                    MatchDay = matchDay++,
+
+                    HomeTeamId = shuffled[i].Id,
+
+                    AwayTeamId = shuffled[j].Id,
+
+                    MatchDay = matchDay, // sequential
+
                     IsPlayed = false
                 });
+
+                matchDay++;
             }
         }
 
-        await _context.Matches.AddRangeAsync(matches);
-        await _context.SaveChangesAsync(); // <-- use await
+        _context.Matches.AddRange(matches);
+
+        await _context.SaveChangesAsync();
+
+        return matches;
     }
 }
