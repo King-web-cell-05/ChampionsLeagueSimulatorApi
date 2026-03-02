@@ -20,6 +20,14 @@ public class CompetitionTeamsController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> AddTeam(AddCompetitionTeamRequest request)
     {
+        // 🔒 Check if the team is already in this competition
+        var exists = await _context.CompetitionTeams
+            .AnyAsync(ct =>
+                ct.CompetitionId == request.CompetitionId &&
+                ct.TeamId == request.TeamId);
+
+        if (exists)
+            return BadRequest("Team already exists in this competition.");
 
         // Create the join entity
         var entry = new CompetitionTeam
