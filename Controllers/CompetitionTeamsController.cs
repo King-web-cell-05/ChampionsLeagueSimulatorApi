@@ -20,6 +20,7 @@ public class CompetitionTeamsController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> AddTeam(AddCompetitionTeamRequest request)
     {
+
         // Create the join entity
         var entry = new CompetitionTeam
         {
