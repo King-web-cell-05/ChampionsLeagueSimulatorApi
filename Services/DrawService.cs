@@ -13,7 +13,7 @@ public class DrawService
         _context = context;
     }
 
-    public async Task<List<Match>> GenerateDraw(Guid competitionId)
+    public async Task<List<Match>> GenerateDoubleRoundRobin(Guid competitionId)
     {
         var teams = await _context.CompetitionTeams
             .Where(ct => ct.CompetitionId == competitionId)
@@ -24,7 +24,7 @@ public class DrawService
         if (teams.Count < 2)
             throw new Exception("Not enough teams");
 
-        // If odd number of teams, add a dummy BYE
+        // Add BYE if odd number of teams
         bool hasBye = false;
         if (teams.Count % 2 != 0)
         {
@@ -37,9 +37,10 @@ public class DrawService
         int matchesPerRound = totalTeams / 2;
 
         var matches = new List<Match>();
-
         var rotation = new List<Team>(teams);
+        int matchDay = 1;
 
+        // First leg
         for (int round = 0; round < totalRounds; round++)
         {
             for (int i = 0; i < matchesPerRound; i++)
@@ -56,12 +57,41 @@ public class DrawService
                     CompetitionId = competitionId,
                     HomeTeamId = home.Id,
                     AwayTeamId = away.Id,
-                    MatchDay = round + 1,
+                    MatchDay = matchDay++,
                     IsPlayed = false
                 });
             }
 
-            // Rotate teams except first
+            // Rotate teams except the first
+            var last = rotation.Last();
+            rotation.RemoveAt(rotation.Count - 1);
+            rotation.Insert(1, last);
+        }
+
+        // Second leg (reverse home & away)
+        rotation = new List<Team>(teams);
+        for (int round = 0; round < totalRounds; round++)
+        {
+            for (int i = 0; i < matchesPerRound; i++)
+            {
+                var home = rotation[totalTeams - 1 - i];
+                var away = rotation[i];
+
+                if (home.Id == Guid.Empty || away.Id == Guid.Empty)
+                    continue;
+
+                matches.Add(new Match
+                {
+                    Id = Guid.NewGuid(),
+                    CompetitionId = competitionId,
+                    HomeTeamId = home.Id,
+                    AwayTeamId = away.Id,
+                    MatchDay = matchDay++,
+                    IsPlayed = false
+                });
+            }
+
+            // Rotate teams except the first
             var last = rotation.Last();
             rotation.RemoveAt(rotation.Count - 1);
             rotation.Insert(1, last);
