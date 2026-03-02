@@ -16,11 +16,16 @@ public class SimulationService
 
     public async Task<List<Match>> SimulateCompetition(Guid competitionId)
     {
+        // Load ALL matches for this competition
         var matches = await _context.Matches
-            .Where(x => x.CompetitionId == competitionId && !x.IsPlayed)
+            .Where(x => x.CompetitionId == competitionId)
+            .Include(x => x.HomeTeam)
+            .Include(x => x.AwayTeam)
+            .Include(x => x.Competition)
+            .OrderBy(x => x.MatchDay)
             .ToListAsync();
 
-        foreach (var match in matches)
+        foreach (var match in matches.Where(m => !m.IsPlayed))
         {
             match.HomeScore = GenerateGoals();
             match.AwayScore = GenerateGoals();
@@ -29,9 +34,8 @@ public class SimulationService
 
         await _context.SaveChangesAsync();
 
-        return matches; // <-- return the updated list
+        return matches;
     }
-
     private int GenerateGoals()
     {
         return _random.Next(0, 5); // 0-4 goals per team
