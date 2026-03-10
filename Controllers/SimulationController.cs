@@ -18,7 +18,6 @@ public class SimulationController : ControllerBase
     public async Task<IActionResult> SimulateCompetition(Guid competitionId)
     {
         var result = await _simulationService.SimulateCompetition(competitionId);
-
         return Ok(result);
     }
 }
