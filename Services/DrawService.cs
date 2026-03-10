@@ -19,28 +19,30 @@ public class DrawService
             .Where(ct => ct.CompetitionId == competitionId)
             .Include(ct => ct.Team)
             .Select(ct => ct.Team)
+            .Distinct()
             .ToListAsync();
 
         if (teams.Count < 2)
             throw new Exception("Not enough teams");
 
         // Add BYE if odd number of teams
-        bool hasBye = false;
         if (teams.Count % 2 != 0)
         {
             teams.Add(new Team { Id = Guid.Empty, Name = "BYE" });
-            hasBye = true;
         }
 
         int totalTeams = teams.Count;
         int totalRounds = totalTeams - 1;
         int matchesPerRound = totalTeams / 2;
 
-        var matches = new List<Match>();
         var rotation = new List<Team>(teams);
+
+        var firstLegMatches = new List<Match>();
+        var allMatches = new List<Match>();
+
         int matchDay = 1;
 
-        // First leg
+        // FIRST LEG
         for (int round = 0; round < totalRounds; round++)
         {
             for (int i = 0; i < matchesPerRound; i++)
@@ -51,55 +53,45 @@ public class DrawService
                 if (home.Id == Guid.Empty || away.Id == Guid.Empty)
                     continue;
 
-                matches.Add(new Match
+                var match = new Match
                 {
                     Id = Guid.NewGuid(),
                     CompetitionId = competitionId,
                     HomeTeamId = home.Id,
                     AwayTeamId = away.Id,
-                    MatchDay = matchDay++,
+                    MatchDay = matchDay,
                     IsPlayed = false
-                });
+                };
+
+                firstLegMatches.Add(match);
+                allMatches.Add(match);
             }
 
-            // Rotate teams except the first
+            matchDay++;
+
+            // rotate teams except first
             var last = rotation.Last();
             rotation.RemoveAt(rotation.Count - 1);
             rotation.Insert(1, last);
         }
 
-        // Second leg (reverse home & away)
-        rotation = new List<Team>(teams);
-        for (int round = 0; round < totalRounds; round++)
+        // SECOND LEG (reverse fixtures)
+        foreach (var match in firstLegMatches)
         {
-            for (int i = 0; i < matchesPerRound; i++)
+            allMatches.Add(new Match
             {
-                var home = rotation[totalTeams - 1 - i];
-                var away = rotation[i];
-
-                if (home.Id == Guid.Empty || away.Id == Guid.Empty)
-                    continue;
-
-                matches.Add(new Match
-                {
-                    Id = Guid.NewGuid(),
-                    CompetitionId = competitionId,
-                    HomeTeamId = home.Id,
-                    AwayTeamId = away.Id,
-                    MatchDay = matchDay++,
-                    IsPlayed = false
-                });
-            }
-
-            // Rotate teams except the first
-            var last = rotation.Last();
-            rotation.RemoveAt(rotation.Count - 1);
-            rotation.Insert(1, last);
+                Id = Guid.NewGuid(),
+                CompetitionId = competitionId,
+                HomeTeamId = match.AwayTeamId,
+                AwayTeamId = match.HomeTeamId,
+                MatchDay = matchDay++,
+                IsPlayed = false
+            });
         }
 
-        _context.Matches.AddRange(matches);
+        _context.Matches.AddRange(allMatches);
         await _context.SaveChangesAsync();
 
-        return matches;
+        return allMatches;
     }
 }
