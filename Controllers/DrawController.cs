@@ -17,7 +17,7 @@ public class DrawController : ControllerBase
     [HttpPost("{competitionId}")]
     public async Task<IActionResult> GenerateDraw(Guid competitionId)
     {
-        await _drawService.GenerateDraw(competitionId);
+        var matches = await _drawService.GenerateDoubleRoundRobin(competitionId);
 
         return Ok("Draw generated successfully");
     }
