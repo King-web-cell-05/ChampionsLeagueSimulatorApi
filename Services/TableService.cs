@@ -1,6 +1,7 @@
-﻿using ChampionsLeagueSimulatorAPI.Data;
+﻿using ChampionsLeagueSimulatorApi.DTOs;
+using ChampionsLeagueSimulatorAPI.Data;
+using ChampionsLeagueSimulatorAPI.DTOs;
 using Microsoft.EntityFrameworkCore;
-using ChampionsLeagueSimulatorApi.DTOs;
 
 namespace ChampionsLeagueSimulatorAPI.Services;
 
@@ -25,21 +26,25 @@ public class TableService
 
         foreach (var match in matches)
         {
-            // Initialize home standing
+            // Initialize home team
             if (!standings.ContainsKey(match.HomeTeamId))
+            {
                 standings[match.HomeTeamId] = new StandingDto
                 {
                     TeamId = match.HomeTeamId,
-                    TeamName = match.HomeTeam?.Name ?? ""
+                    TeamName = match.HomeTeam!.Name
                 };
+            }
 
-            // Initialize away standing
+            // Initialize away team
             if (!standings.ContainsKey(match.AwayTeamId))
+            {
                 standings[match.AwayTeamId] = new StandingDto
                 {
                     TeamId = match.AwayTeamId,
-                    TeamName = match.AwayTeam?.Name ?? ""
+                    TeamName = match.AwayTeam!.Name
                 };
+            }
 
             var home = standings[match.HomeTeamId];
             var away = standings[match.AwayTeamId];
@@ -69,6 +74,7 @@ public class TableService
             {
                 home.Draws++;
                 away.Draws++;
+
                 home.Points++;
                 away.Points++;
             }
@@ -80,6 +86,7 @@ public class TableService
         return standings.Values
             .OrderByDescending(s => s.Points)
             .ThenByDescending(s => s.GoalDifference)
+            .ThenByDescending(s => s.GoalsFor)
             .ToList();
     }
 }
