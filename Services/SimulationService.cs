@@ -1,4 +1,5 @@
-﻿using ChampionsLeagueSimulatorAPI.Data;
+﻿using ChampionsLeagueSimulatorApi.DTOs;
+using ChampionsLeagueSimulatorAPI.Data;
 using ChampionsLeagueSimulatorAPI.DTOs;
 using ChampionsLeagueSimulatorAPI.Entities;
 using Microsoft.EntityFrameworkCore;
