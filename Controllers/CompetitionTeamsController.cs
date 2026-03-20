@@ -17,10 +17,11 @@ public class CompetitionTeamsController : ControllerBase
         _context = context;
     }
 
+    // ✅ Add a team to a competition
     [HttpPost]
     public async Task<IActionResult> AddTeam(AddCompetitionTeamRequest request)
     {
-        // 🔒 Check if the team is already in this competition
+        // Check if the team is already in this competition
         var exists = await _context.CompetitionTeams
             .AnyAsync(ct =>
                 ct.CompetitionId == request.CompetitionId &&
@@ -46,7 +47,6 @@ public class CompetitionTeamsController : ControllerBase
         // Map to DTO
         var response = new CompetitionTeamResponse
         {
-            Id = entry.Id,
             CompetitionId = entry.CompetitionId,
             CompetitionName = entry.Competition?.Name ?? "",
             TeamId = entry.TeamId,
@@ -56,6 +56,7 @@ public class CompetitionTeamsController : ControllerBase
         return Ok(response);
     }
 
+    // ✅ Get all teams in a competition
     [HttpGet("{competitionId}")]
     public async Task<IActionResult> GetTeamsByCompetition(Guid competitionId)
     {
@@ -67,7 +68,6 @@ public class CompetitionTeamsController : ControllerBase
 
         var response = entries.Select(ct => new CompetitionTeamResponse
         {
-            Id = ct.Id,
             CompetitionId = ct.CompetitionId,
             CompetitionName = ct.Competition?.Name ?? "",
             TeamId = ct.TeamId,
@@ -75,5 +75,22 @@ public class CompetitionTeamsController : ControllerBase
         }).ToList();
 
         return Ok(response);
+    }
+
+    // ✅ Remove a team from a competition
+    [HttpDelete]
+    public async Task<IActionResult> RemoveTeam(Guid competitionId, Guid teamId)
+    {
+        var entry = await _context.CompetitionTeams
+            .FirstOrDefaultAsync(ct =>
+                ct.CompetitionId == competitionId && ct.TeamId == teamId);
+
+        if (entry == null)
+            return NotFound();
+
+        _context.CompetitionTeams.Remove(entry);
+        await _context.SaveChangesAsync();
+
+        return NoContent();
     }
 }

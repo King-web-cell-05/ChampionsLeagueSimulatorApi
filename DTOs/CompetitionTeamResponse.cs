@@ -2,7 +2,7 @@
 
 public class CompetitionTeamResponse
 {
-    public Guid Id { get; set; }
+  
 
     public Guid CompetitionId { get; set; }
     public string CompetitionName { get; set; } = string.Empty;

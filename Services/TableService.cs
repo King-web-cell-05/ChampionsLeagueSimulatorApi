@@ -15,22 +15,30 @@ public class TableService
 
     public async Task<List<StandingDto>> GenerateTable(Guid competitionId)
     {
-        // ✅ Get all teams in this competition (FIXED)
+        // ✅ Get all teams in this competition
         var teams = await _context.CompetitionTeams
             .Where(ct => ct.CompetitionId == competitionId)
             .Select(ct => ct.Team)
             .ToListAsync();
 
-        // ✅ Initialize standings with ALL teams
+        // ✅ Initialize standings for ALL teams
         var standings = teams.ToDictionary(
             t => t.Id,
             t => new StandingDto
             {
                 TeamId = t.Id,
-                TeamName = t.Name
+                TeamName = t.Name,
+                Played = 0,
+                Wins = 0,
+                Draws = 0,
+                Losses = 0,
+                GoalsFor = 0,
+                GoalsAgainst = 0,
+                Points = 0,
+                Position = 0
             });
 
-        // ✅ Get only played matches
+        // ✅ Get all played matches for the competition
         var matches = await _context.Matches
             .Where(m => m.CompetitionId == competitionId && m.IsPlayed)
             .Include(m => m.HomeTeam)
@@ -73,6 +81,12 @@ public class TableService
                 home.Points++;
                 away.Points++;
             }
+        }
+
+        // ✅ Compute goal difference for each team
+        foreach (var team in standings.Values)
+        {
+            team.GoalDifference = team.GoalsFor - team.GoalsAgainst;
         }
 
         // ✅ Order standings

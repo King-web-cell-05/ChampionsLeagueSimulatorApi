@@ -10,11 +10,8 @@ public class AppDbContext : DbContext
     }
 
     public DbSet<Team> Teams { get; set; }
-
     public DbSet<Competition> Competitions { get; set; }
-
     public DbSet<Match> Matches { get; set; }
-
     public DbSet<CompetitionTeam> CompetitionTeams { get; set; }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -37,7 +34,7 @@ public class AppDbContext : DbContext
             .HasForeignKey(m => m.CompetitionId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        // ✅ ADD THIS BLOCK (IMPORTANT)
+        // ✅ COMPOSITE KEY CONFIG
         modelBuilder.Entity<CompetitionTeam>()
             .HasKey(ct => new { ct.CompetitionId, ct.TeamId });
 

@@ -9,15 +9,12 @@
         public int Wins { get; set; }
         public int Draws { get; set; }
         public int Losses { get; set; }
-
         public int GoalsFor { get; set; }
         public int GoalsAgainst { get; set; }
 
-        // ✅ Computed instead of manually setting
-        public int GoalDifference => GoalsFor - GoalsAgainst;
-
+        // ✅ Make sure these exist
+        public int GoalDifference { get; set; }
         public int Points { get; set; }
-
-        public int Position { get; set; } // optional but recommended
+        public int Position { get; set; }
     }
 }
