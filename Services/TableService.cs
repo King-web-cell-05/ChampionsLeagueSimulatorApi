@@ -21,49 +21,42 @@ public class TableService
             .Include(m => m.AwayTeam)
             .ToListAsync();
 
-        var standings = new Dictionary<Guid, StandingDto>();
+        var teams = await _context.Teams
+            .Where(t => t.CompetitionId == competitionId)
+            .ToListAsync();
+
+        var standings = teams.ToDictionary(
+            t => t.Id,
+            t => new StandingDto
+            {
+                TeamId = t.Id,
+                TeamName = t.Name
+            });
 
         foreach (var match in matches)
         {
-            // Initialize home team
-            if (!standings.ContainsKey(match.HomeTeamId))
-            {
-                standings[match.HomeTeamId] = new StandingDto
-                {
-                    TeamId = match.HomeTeamId,
-                    TeamName = match.HomeTeam!.Name
-                };
-            }
-
-            // Initialize away team
-            if (!standings.ContainsKey(match.AwayTeamId))
-            {
-                standings[match.AwayTeamId] = new StandingDto
-                {
-                    TeamId = match.AwayTeamId,
-                    TeamName = match.AwayTeam!.Name
-                };
-            }
-
             var home = standings[match.HomeTeamId];
             var away = standings[match.AwayTeamId];
+
+            var homeScore = match.HomeScore ?? 0;
+            var awayScore = match.AwayScore ?? 0;
 
             home.Played++;
             away.Played++;
 
-            home.GoalsFor += match.HomeScore ?? 0;
-            home.GoalsAgainst += match.AwayScore ?? 0;
+            home.GoalsFor += homeScore;
+            home.GoalsAgainst += awayScore;
 
-            away.GoalsFor += match.AwayScore ?? 0;
-            away.GoalsAgainst += match.HomeScore ?? 0;
+            away.GoalsFor += awayScore;
+            away.GoalsAgainst += homeScore;
 
-            if ((match.HomeScore ?? 0) > (match.AwayScore ?? 0))
+            if (homeScore > awayScore)
             {
                 home.Wins++;
                 home.Points += 3;
                 away.Losses++;
             }
-            else if ((match.HomeScore ?? 0) < (match.AwayScore ?? 0))
+            else if (homeScore < awayScore)
             {
                 away.Wins++;
                 away.Points += 3;
@@ -73,19 +66,22 @@ public class TableService
             {
                 home.Draws++;
                 away.Draws++;
-
                 home.Points++;
                 away.Points++;
             }
-
-            home.GoalDifference = home.GoalsFor - home.GoalsAgainst;
-            away.GoalDifference = away.GoalsFor - away.GoalsAgainst;
         }
 
-        return standings.Values
+        var ordered = standings.Values
             .OrderByDescending(s => s.Points)
             .ThenByDescending(s => s.GoalDifference)
             .ThenByDescending(s => s.GoalsFor)
             .ToList();
+
+        for (int i = 0; i < ordered.Count; i++)
+        {
+            ordered[i].Position = i + 1;
+        }
+
+        return ordered;
     }
 }
