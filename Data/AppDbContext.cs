@@ -36,5 +36,19 @@ public class AppDbContext : DbContext
             .WithMany()
             .HasForeignKey(m => m.CompetitionId)
             .OnDelete(DeleteBehavior.Restrict);
+
+        // ✅ ADD THIS BLOCK (IMPORTANT)
+        modelBuilder.Entity<CompetitionTeam>()
+            .HasKey(ct => new { ct.CompetitionId, ct.TeamId });
+
+        modelBuilder.Entity<CompetitionTeam>()
+            .HasOne(ct => ct.Team)
+            .WithMany()
+            .HasForeignKey(ct => ct.TeamId);
+
+        modelBuilder.Entity<CompetitionTeam>()
+            .HasOne(ct => ct.Competition)
+            .WithMany()
+            .HasForeignKey(ct => ct.CompetitionId);
     }
 }

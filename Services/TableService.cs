@@ -15,16 +15,13 @@ public class TableService
 
     public async Task<List<StandingDto>> GenerateTable(Guid competitionId)
     {
-        var matches = await _context.Matches
-            .Where(m => m.CompetitionId == competitionId && m.IsPlayed)
-            .Include(m => m.HomeTeam)
-            .Include(m => m.AwayTeam)
+        // ✅ Get all teams in this competition (FIXED)
+        var teams = await _context.CompetitionTeams
+            .Where(ct => ct.CompetitionId == competitionId)
+            .Select(ct => ct.Team)
             .ToListAsync();
 
-        var teams = await _context.Teams
-            .Where(t => t.CompetitionId == competitionId)
-            .ToListAsync();
-
+        // ✅ Initialize standings with ALL teams
         var standings = teams.ToDictionary(
             t => t.Id,
             t => new StandingDto
@@ -32,6 +29,13 @@ public class TableService
                 TeamId = t.Id,
                 TeamName = t.Name
             });
+
+        // ✅ Get only played matches
+        var matches = await _context.Matches
+            .Where(m => m.CompetitionId == competitionId && m.IsPlayed)
+            .Include(m => m.HomeTeam)
+            .Include(m => m.AwayTeam)
+            .ToListAsync();
 
         foreach (var match in matches)
         {
@@ -71,12 +75,14 @@ public class TableService
             }
         }
 
+        // ✅ Order standings
         var ordered = standings.Values
             .OrderByDescending(s => s.Points)
             .ThenByDescending(s => s.GoalDifference)
             .ThenByDescending(s => s.GoalsFor)
             .ToList();
 
+        // ✅ Assign positions
         for (int i = 0; i < ordered.Count; i++)
         {
             ordered[i].Position = i + 1;
