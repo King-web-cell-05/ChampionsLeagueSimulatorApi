@@ -1,6 +1,5 @@
 ﻿using ChampionsLeagueSimulatorApi.DTOs;
 using ChampionsLeagueSimulatorAPI.Data;
-using ChampionsLeagueSimulatorAPI.DTOs;
 using ChampionsLeagueSimulatorAPI.Entities;
 using Microsoft.EntityFrameworkCore;
 
@@ -20,7 +19,7 @@ public class SimulationService
 
     public async Task<SimulationResponseDto> SimulateCompetition(Guid competitionId)
     {
-        // Load matches for the competition
+        // ✅ Load all matches for the competition
         var matches = await _context.Matches
             .Where(m => m.CompetitionId == competitionId)
             .Include(m => m.HomeTeam)
@@ -29,6 +28,7 @@ public class SimulationService
             .OrderBy(m => m.MatchDay)
             .ToListAsync();
 
+        // ✅ Simulate only unplayed matches
         foreach (var match in matches.Where(m => !m.IsPlayed))
         {
             match.HomeScore = GenerateGoals();
@@ -38,10 +38,10 @@ public class SimulationService
 
         await _context.SaveChangesAsync();
 
-        // Generate updated league table
+        // ✅ Generate updated league standings using TableService
         var standings = await _tableService.GenerateTable(competitionId);
 
-        // Map matches to DTO
+        // ✅ Map matches to DTO
         var matchDtos = matches.Select(m => new MatchDto
         {
             Id = m.Id,
@@ -57,6 +57,7 @@ public class SimulationService
             MatchDay = m.MatchDay
         }).ToList();
 
+        // ✅ Return simulation results + standings
         return new SimulationResponseDto
         {
             Matches = matchDtos,
@@ -64,8 +65,9 @@ public class SimulationService
         };
     }
 
+    // ✅ Random goal generator (0-4 goals)
     private int GenerateGoals()
     {
-        return _random.Next(0, 5); // 0-4 goals
+        return _random.Next(0, 5);
     }
 }
