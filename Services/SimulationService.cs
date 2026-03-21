@@ -1,6 +1,7 @@
 ﻿using ChampionsLeagueSimulatorApi.DTOs;
 using ChampionsLeagueSimulatorAPI.Data;
 using ChampionsLeagueSimulatorAPI.DTOs;
+using ChampionsLeagueSimulatorAPI.Entities;
 using Microsoft.EntityFrameworkCore;
 
 namespace ChampionsLeagueSimulatorAPI.Services;
@@ -17,17 +18,17 @@ public class SimulationService
         _tableService = tableService;
     }
 
-    public async Task<SimulationResponseDto> SimulateCompetition(Guid competitionId)
+    // ✅ Simulate only group stage matches
+    public async Task<SimulationResponseDto> SimulateGroupStage(Guid competitionId)
     {
         var matches = await _context.Matches
-            .Where(m => m.CompetitionId == competitionId)
+            .Where(m => m.CompetitionId == competitionId && !m.IsPlayed)
             .Include(m => m.HomeTeam)
             .Include(m => m.AwayTeam)
             .Include(m => m.Competition)
-            .OrderBy(m => m.MatchDay)
             .ToListAsync();
 
-        foreach (var match in matches.Where(m => !m.IsPlayed))
+        foreach (var match in matches)
         {
             match.HomeScore = GenerateGoals();
             match.AwayScore = GenerateGoals();
@@ -36,33 +37,28 @@ public class SimulationService
 
         await _context.SaveChangesAsync();
 
-        // ✅ Generate standings
-        var standings = await _tableService.GenerateTable(competitionId);
-
-        var matchDtos = matches.Select(m => new MatchDto
-        {
-            Id = m.Id,
-            CompetitionId = m.CompetitionId,
-            CompetitionName = m.Competition?.Name ?? "",
-            HomeTeamId = m.HomeTeamId,
-            HomeTeamName = m.HomeTeam?.Name ?? "",
-            AwayTeamId = m.AwayTeamId,
-            AwayTeamName = m.AwayTeam?.Name ?? "",
-            HomeScore = m.HomeScore,
-            AwayScore = m.AwayScore,
-            IsPlayed = m.IsPlayed,
-            MatchDay = m.MatchDay
-        }).ToList();
+        var groupedStandings = await _tableService.GenerateGroupedTable(competitionId);
 
         return new SimulationResponseDto
         {
-            Matches = matchDtos,
-            Standings = standings // ✅ WILL NOW SHOW
+            Matches = matches.Select(m => new MatchDto
+            {
+                Id = m.Id,
+                CompetitionId = m.CompetitionId,
+                CompetitionName = m.Competition?.Name ?? "",
+                HomeTeamId = m.HomeTeamId,
+                HomeTeamName = m.HomeTeam?.Name ?? "",
+                AwayTeamId = m.AwayTeamId,
+                AwayTeamName = m.AwayTeam?.Name ?? "",
+                HomeScore = m.HomeScore,
+                AwayScore = m.AwayScore,
+                IsPlayed = m.IsPlayed,
+                MatchDay = m.MatchDay
+            }).ToList(),
+            // ✅ Flatten grouped standings if needed for front-end
+            Standings = groupedStandings.SelectMany(g => g.Value).ToList()
         };
     }
 
-    private int GenerateGoals()
-    {
-        return _random.Next(0, 5);
-    }
+    private int GenerateGoals() => _random.Next(0, 5);
 }

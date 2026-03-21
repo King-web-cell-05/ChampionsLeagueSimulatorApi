@@ -14,5 +14,6 @@
         public int GoalDifference { get; set; }
         public int Points { get; set; }
         public int Position { get; set; }
+        public string GroupName { get; set; } = "";
     }
 }
