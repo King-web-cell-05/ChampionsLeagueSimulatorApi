@@ -1,5 +1,6 @@
 ﻿using ChampionsLeagueSimulatorApi.DTOs;
 using ChampionsLeagueSimulatorAPI.Data;
+using ChampionsLeagueSimulatorAPI.DTOs;
 using Microsoft.EntityFrameworkCore;
 
 namespace ChampionsLeagueSimulatorAPI.Services;
@@ -13,53 +14,46 @@ public class TableService
         _context = context;
     }
 
-    public async Task<List<StandingDto>> GenerateTable(Guid competitionId)
+    // ✅ Return standings per group
+    public async Task<Dictionary<string, List<StandingDto>>> GenerateGroupedTable(Guid competitionId)
     {
-        // ✅ FIX: Load teams correctly
         var teams = await _context.CompetitionTeams
             .Where(ct => ct.CompetitionId == competitionId)
             .Include(ct => ct.Team)
-            .Select(ct => ct.Team)
             .ToListAsync();
 
-        if (!teams.Any())
-            return new List<StandingDto>(); // safety
-
-        // ✅ Initialize standings
+        // Initialize standings per team
         var standings = teams.ToDictionary(
-            t => t.Id,
+            t => t.TeamId,
             t => new StandingDto
             {
-                TeamId = t.Id,
-                TeamName = t.Name,
+                TeamId = t.TeamId,
+                TeamName = t.Team.Name,
                 Played = 0,
                 Wins = 0,
                 Draws = 0,
                 Losses = 0,
                 GoalsFor = 0,
                 GoalsAgainst = 0,
-                GoalDifference = 0,
                 Points = 0,
-                Position = 0
+                Position = 0,
+                GroupName = t.GroupName
             });
 
-        // ✅ Get played matches
+        // Get all played matches
         var matches = await _context.Matches
             .Where(m => m.CompetitionId == competitionId && m.IsPlayed)
+            .Include(m => m.HomeTeam)
+            .Include(m => m.AwayTeam)
             .ToListAsync();
 
         foreach (var match in matches)
         {
-            // 🔒 Safety check (prevents crash if mismatch)
-            if (!standings.ContainsKey(match.HomeTeamId) ||
-                !standings.ContainsKey(match.AwayTeamId))
-                continue;
-
             var home = standings[match.HomeTeamId];
             var away = standings[match.AwayTeamId];
 
-            var homeScore = match.HomeScore ?? 0;
-            var awayScore = match.AwayScore ?? 0;
+            int homeScore = match.HomeScore ?? 0;
+            int awayScore = match.AwayScore ?? 0;
 
             home.Played++;
             away.Played++;
@@ -90,24 +84,30 @@ public class TableService
                 away.Points++;
             }
 
-            // ✅ Update goal difference immediately
             home.GoalDifference = home.GoalsFor - home.GoalsAgainst;
             away.GoalDifference = away.GoalsFor - away.GoalsAgainst;
         }
 
-        // ✅ Sort standings
-        var ordered = standings.Values
-            .OrderByDescending(s => s.Points)
-            .ThenByDescending(s => s.GoalDifference)
-            .ThenByDescending(s => s.GoalsFor)
-            .ToList();
+        // ✅ Group standings by group
+        var grouped = standings.Values
+            .GroupBy(s => s.GroupName)
+            .ToDictionary(
+                g => g.Key,
+                g => g.OrderByDescending(s => s.Points)
+                      .ThenByDescending(s => s.GoalDifference)
+                      .ThenByDescending(s => s.GoalsFor)
+                      .ToList()
+            );
 
-        // ✅ Assign positions
-        for (int i = 0; i < ordered.Count; i++)
+        // ✅ Assign position per group
+        foreach (var group in grouped)
         {
-            ordered[i].Position = i + 1;
+            for (int i = 0; i < group.Value.Count; i++)
+            {
+                group.Value[i].Position = i + 1;
+            }
         }
 
-        return ordered;
+        return grouped;
     }
 }
