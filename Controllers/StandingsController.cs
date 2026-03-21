@@ -19,14 +19,14 @@ public class StandingsController : ControllerBase
     [HttpGet("{competitionId}")]
     public async Task<IActionResult> GetStandings(Guid competitionId)
     {
-        var standings = await _tableService.GenerateTable(competitionId);
+        var standings = await _tableService.GenerateGroupedTable(competitionId); // ✅ FIXED
 
         if (standings == null || !standings.Any())
         {
             return Ok(new
             {
                 message = "No standings available yet for this competition.",
-                data = new List<StandingDto>()
+                data = new Dictionary<string, List<StandingDto>>() // ✅ FIXED TYPE
             });
         }
 
