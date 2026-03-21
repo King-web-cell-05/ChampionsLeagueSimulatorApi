@@ -15,13 +15,17 @@ public class TableService
 
     public async Task<List<StandingDto>> GenerateTable(Guid competitionId)
     {
-        // ✅ Get all teams in this competition
+        // ✅ FIX: Load teams correctly
         var teams = await _context.CompetitionTeams
             .Where(ct => ct.CompetitionId == competitionId)
+            .Include(ct => ct.Team)
             .Select(ct => ct.Team)
             .ToListAsync();
 
-        // ✅ Initialize standings for ALL teams
+        if (!teams.Any())
+            return new List<StandingDto>(); // safety
+
+        // ✅ Initialize standings
         var standings = teams.ToDictionary(
             t => t.Id,
             t => new StandingDto
@@ -34,19 +38,23 @@ public class TableService
                 Losses = 0,
                 GoalsFor = 0,
                 GoalsAgainst = 0,
+                GoalDifference = 0,
                 Points = 0,
                 Position = 0
             });
 
-        // ✅ Get all played matches for the competition
+        // ✅ Get played matches
         var matches = await _context.Matches
             .Where(m => m.CompetitionId == competitionId && m.IsPlayed)
-            .Include(m => m.HomeTeam)
-            .Include(m => m.AwayTeam)
             .ToListAsync();
 
         foreach (var match in matches)
         {
+            // 🔒 Safety check (prevents crash if mismatch)
+            if (!standings.ContainsKey(match.HomeTeamId) ||
+                !standings.ContainsKey(match.AwayTeamId))
+                continue;
+
             var home = standings[match.HomeTeamId];
             var away = standings[match.AwayTeamId];
 
@@ -81,15 +89,13 @@ public class TableService
                 home.Points++;
                 away.Points++;
             }
+
+            // ✅ Update goal difference immediately
+            home.GoalDifference = home.GoalsFor - home.GoalsAgainst;
+            away.GoalDifference = away.GoalsFor - away.GoalsAgainst;
         }
 
-        // ✅ Compute goal difference for each team
-        foreach (var team in standings.Values)
-        {
-            team.GoalDifference = team.GoalsFor - team.GoalsAgainst;
-        }
-
-        // ✅ Order standings
+        // ✅ Sort standings
         var ordered = standings.Values
             .OrderByDescending(s => s.Points)
             .ThenByDescending(s => s.GoalDifference)
