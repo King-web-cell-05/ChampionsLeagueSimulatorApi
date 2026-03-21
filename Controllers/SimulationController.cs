@@ -30,18 +30,14 @@ public class SimulationController : ControllerBase
         if (competitionId == Guid.Empty)
             return BadRequest("Invalid competition ID.");
 
-        SimulationResponseDto result;
-
         try
         {
-            result = await _simulationService.SimulateCompetition(competitionId);
+            var result = await _simulationService.SimulateGroupStage(competitionId); // ✅ FIXED
+            return Ok(result);
         }
         catch (Exception ex)
         {
-            // Optional: log exception here
             return StatusCode(500, $"Error simulating competition: {ex.Message}");
         }
-
-        return Ok(result);
     }
 }
