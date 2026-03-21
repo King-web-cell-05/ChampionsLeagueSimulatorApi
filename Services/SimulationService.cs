@@ -38,7 +38,6 @@ public class SimulationService
 
         // ✅ Generate standings
         var standings = await _tableService.GenerateTable(competitionId);
-        Console.WriteLine($"Standings count: {standings.Count}");
 
         var matchDtos = matches.Select(m => new MatchDto
         {
