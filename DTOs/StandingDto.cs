@@ -11,8 +11,6 @@
         public int Losses { get; set; }
         public int GoalsFor { get; set; }
         public int GoalsAgainst { get; set; }
-
-        // ✅ Make sure these exist
         public int GoalDifference { get; set; }
         public int Points { get; set; }
         public int Position { get; set; }
