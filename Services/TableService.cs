@@ -1,5 +1,4 @@
-﻿using ChampionsLeagueSimulatorApi.DTOs;
-using ChampionsLeagueSimulatorAPI.Data;
+﻿using ChampionsLeagueSimulatorAPI.Data;
 using ChampionsLeagueSimulatorAPI.DTOs;
 using Microsoft.EntityFrameworkCore;
 
@@ -14,37 +13,24 @@ public class TableService
         _context = context;
     }
 
-    // ✅ Return standings per group
-    public async Task<Dictionary<string, List<StandingDto>>> GenerateGroupedTable(Guid competitionId)
+    public async Task<List<StandingDto>> GenerateTable(Guid competitionId)
     {
         var teams = await _context.CompetitionTeams
             .Where(ct => ct.CompetitionId == competitionId)
             .Include(ct => ct.Team)
+            .Select(ct => ct.Team)
             .ToListAsync();
 
-        // Initialize standings per team
         var standings = teams.ToDictionary(
-            t => t.TeamId,
+            t => t.Id,
             t => new StandingDto
             {
-                TeamId = t.TeamId,
-                TeamName = t.Team.Name,
-                Played = 0,
-                Wins = 0,
-                Draws = 0,
-                Losses = 0,
-                GoalsFor = 0,
-                GoalsAgainst = 0,
-                Points = 0,
-                Position = 0,
-                GroupName = t.GroupName
+                TeamId = t.Id,
+                TeamName = t.Name
             });
 
-        // Get all played matches
         var matches = await _context.Matches
             .Where(m => m.CompetitionId == competitionId && m.IsPlayed)
-            .Include(m => m.HomeTeam)
-            .Include(m => m.AwayTeam)
             .ToListAsync();
 
         foreach (var match in matches)
@@ -88,26 +74,10 @@ public class TableService
             away.GoalDifference = away.GoalsFor - away.GoalsAgainst;
         }
 
-        // ✅ Group standings by group
-        var grouped = standings.Values
-            .GroupBy(s => s.GroupName)
-            .ToDictionary(
-                g => g.Key,
-                g => g.OrderByDescending(s => s.Points)
-                      .ThenByDescending(s => s.GoalDifference)
-                      .ThenByDescending(s => s.GoalsFor)
-                      .ToList()
-            );
-
-        // ✅ Assign position per group
-        foreach (var group in grouped)
-        {
-            for (int i = 0; i < group.Value.Count; i++)
-            {
-                group.Value[i].Position = i + 1;
-            }
-        }
-
-        return grouped;
+        return standings.Values
+            .OrderByDescending(s => s.Points)
+            .ThenByDescending(s => s.GoalDifference)
+            .ThenByDescending(s => s.GoalsFor)
+            .ToList();
     }
 }
