@@ -1,5 +1,6 @@
 ﻿using ChampionsLeagueSimulatorAPI.Data;
 using ChampionsLeagueSimulatorAPI.DTOs;
+using ChampionsLeagueSimulatorApi.DTOs;
 using Microsoft.EntityFrameworkCore;
 
 namespace ChampionsLeagueSimulatorAPI.Services;

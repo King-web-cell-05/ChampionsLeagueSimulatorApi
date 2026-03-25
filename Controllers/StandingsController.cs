@@ -15,18 +15,17 @@ public class StandingsController : ControllerBase
         _tableService = tableService;
     }
 
-    // ✅ GET: api/standings/{competitionId}
     [HttpGet("{competitionId}")]
     public async Task<IActionResult> GetStandings(Guid competitionId)
     {
-        var standings = await _tableService.GenerateGroupedTable(competitionId); // ✅ FIXED
+        var standings = await _tableService.GenerateTable(competitionId);
 
-        if (standings == null || !standings.Any())
+        if (!standings.Any())
         {
             return Ok(new
             {
-                message = "No standings available yet for this competition.",
-                data = new Dictionary<string, List<StandingDto>>() // ✅ FIXED TYPE
+                message = "No standings yet.",
+                data = new List<StandingDto>()
             });
         }
 
