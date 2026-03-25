@@ -18,8 +18,55 @@ public class SimulationService
         _tableService = tableService;
     }
 
-    // ✅ Simulate only group stage matches
-    public async Task<SimulationResponseDto> SimulateGroupStage(Guid competitionId)
+    // ✅ STEP 1: GENERATE 8 MATCHES PER TEAM
+    public async Task GenerateLeagueFixtures(Guid competitionId)
+    {
+        var teams = await _context.CompetitionTeams
+            .Where(ct => ct.CompetitionId == competitionId)
+            .Select(ct => ct.Team)
+            .ToListAsync();
+
+        var matches = new List<Match>();
+        var existingPairs = new HashSet<string>();
+
+        foreach (var team in teams)
+        {
+            int matchesNeeded = 8;
+
+            while (matchesNeeded > 0)
+            {
+                var opponent = teams[_random.Next(teams.Count)];
+
+                if (team.Id == opponent.Id)
+                    continue;
+
+                var key1 = $"{team.Id}-{opponent.Id}";
+                var key2 = $"{opponent.Id}-{team.Id}";
+
+                if (existingPairs.Contains(key1) || existingPairs.Contains(key2))
+                    continue;
+
+                matches.Add(new Match
+                {
+                    Id = Guid.NewGuid(),
+                    CompetitionId = competitionId,
+                    HomeTeamId = team.Id,
+                    AwayTeamId = opponent.Id,
+                    MatchDay = _random.Next(1, 9),
+                    IsPlayed = false
+                });
+
+                existingPairs.Add(key1);
+                matchesNeeded--;
+            }
+        }
+
+        _context.Matches.AddRange(matches);
+        await _context.SaveChangesAsync();
+    }
+
+    // ✅ STEP 2: SIMULATE MATCHES
+    public async Task<SimulationResponseDto> SimulateCompetition(Guid competitionId)
     {
         var matches = await _context.Matches
             .Where(m => m.CompetitionId == competitionId && !m.IsPlayed)
@@ -37,7 +84,7 @@ public class SimulationService
 
         await _context.SaveChangesAsync();
 
-        var groupedStandings = await _tableService.GenerateGroupedTable(competitionId);
+        var standings = await _tableService.GenerateTable(competitionId);
 
         return new SimulationResponseDto
         {
@@ -55,8 +102,8 @@ public class SimulationService
                 IsPlayed = m.IsPlayed,
                 MatchDay = m.MatchDay
             }).ToList(),
-            // ✅ Flatten grouped standings if needed for front-end
-            Standings = groupedStandings.SelectMany(g => g.Value).ToList()
+
+            Standings = standings
         };
     }
 
