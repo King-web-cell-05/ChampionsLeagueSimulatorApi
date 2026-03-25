@@ -1,6 +1,5 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using ChampionsLeagueSimulatorAPI.Services;
-using ChampionsLeagueSimulatorApi.DTOs;
 
 namespace ChampionsLeagueSimulatorAPI.Controllers;
 
@@ -15,15 +14,6 @@ public class SimulationController : ControllerBase
         _simulationService = simulationService;
     }
 
-    /// <summary>
-    /// Simulates all unplayed matches for a competition and returns updated matches and league standings.
-    /// </summary>
-    /// <param name="competitionId">The ID of the competition to simulate.</param>
-    /// <returns>
-    /// A SimulationResponseDto containing:
-    /// - Matches: all matches for the competition
-    /// - Standings: updated league table after simulation
-    /// </returns>
     [HttpPost("{competitionId}/simulate")]
     public async Task<IActionResult> SimulateCompetition(Guid competitionId)
     {
@@ -32,12 +22,19 @@ public class SimulationController : ControllerBase
 
         try
         {
-            var result = await _simulationService.SimulateGroupStage(competitionId); // ✅ FIXED
+            var result = await _simulationService.SimulateCompetition(competitionId); // ✅ FIXED
             return Ok(result);
         }
         catch (Exception ex)
         {
             return StatusCode(500, $"Error simulating competition: {ex.Message}");
         }
+    }
+
+    [HttpPost("{competitionId}/generate-fixtures")]
+    public async Task<IActionResult> GenerateFixtures(Guid competitionId)
+    {
+        await _simulationService.GenerateLeagueFixtures(competitionId);
+        return Ok("Fixtures generated successfully");
     }
 }

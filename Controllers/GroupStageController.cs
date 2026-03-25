@@ -18,19 +18,30 @@ public class GroupStageController : ControllerBase
         _tableService = tableService;
     }
 
-    // ✅ POST: api/GroupStage/{competitionId}/simulate
-    [HttpPost("{competitionId}/simulate")]
-    public async Task<IActionResult> SimulateGroupStage(Guid competitionId)
+    // ✅ Generate fixtures (8 matches per team)
+    // POST: api/GroupStage/{competitionId}/generate-fixtures
+    [HttpPost("{competitionId}/generate-fixtures")]
+    public async Task<IActionResult> GenerateFixtures(Guid competitionId)
     {
-        var result = await _simulationService.SimulateGroupStage(competitionId);
+        await _simulationService.GenerateLeagueFixtures(competitionId);
+        return Ok("Fixtures generated successfully");
+    }
+
+    // ✅ Simulate league matches
+    // POST: api/GroupStage/{competitionId}/simulate
+    [HttpPost("{competitionId}/simulate")]
+    public async Task<IActionResult> SimulateLeague(Guid competitionId)
+    {
+        var result = await _simulationService.SimulateCompetition(competitionId);
         return Ok(result);
     }
 
-    // ✅ GET: api/GroupStage/{competitionId}/standings
+    // ✅ Get league standings
+    // GET: api/GroupStage/{competitionId}/standings
     [HttpGet("{competitionId}/standings")]
-    public async Task<IActionResult> GetGroupedStandings(Guid competitionId)
+    public async Task<IActionResult> GetStandings(Guid competitionId)
     {
-        var standings = await _tableService.GenerateGroupedTable(competitionId);
+        var standings = await _tableService.GenerateTable(competitionId);
         return Ok(standings);
     }
-}   
+}
