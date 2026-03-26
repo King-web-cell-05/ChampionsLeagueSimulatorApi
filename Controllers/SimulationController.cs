@@ -31,10 +31,5 @@ public class SimulationController : ControllerBase
         }
     }
 
-    [HttpPost("{competitionId}/generate-fixtures")]
-    public async Task<IActionResult> GenerateFixtures(Guid competitionId)
-    {
-        await _simulationService.GenerateLeagueFixtures(competitionId);
-        return Ok("Fixtures generated successfully");
-    }
+
 }
