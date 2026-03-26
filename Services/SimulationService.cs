@@ -26,45 +26,76 @@ public class SimulationService
             .Select(ct => ct.Team)
             .ToListAsync();
 
+        if (teams.Count < 2)
+            return;
+
         var matches = new List<Match>();
-        var existingPairs = new HashSet<string>();
+        var playedPairs = new HashSet<string>();
 
-        foreach (var team in teams)
+        // Shuffle teams for randomness
+        teams = teams.OrderBy(x => Guid.NewGuid()).ToList();
+
+        // Track matches per team
+        var matchesPerTeam = teams.ToDictionary(t => t.Id, t => 0);
+
+        int matchDay = 1;
+
+        while (matchesPerTeam.Any(t => t.Value < 8))
         {
-            int matchesNeeded = 8;
+            var availableTeams = teams
+                .Where(t => matchesPerTeam[t.Id] < 8)
+                .OrderBy(x => Guid.NewGuid())
+                .ToList();
 
-            while (matchesNeeded > 0)
+            for (int i = 0; i < availableTeams.Count - 1; i++)
             {
-                var opponent = teams[_random.Next(teams.Count)];
+                var home = availableTeams[i];
 
-                if (team.Id == opponent.Id)
+                if (matchesPerTeam[home.Id] >= 8)
                     continue;
 
-                var key1 = $"{team.Id}-{opponent.Id}";
-                var key2 = $"{opponent.Id}-{team.Id}";
-
-                if (existingPairs.Contains(key1) || existingPairs.Contains(key2))
-                    continue;
-
-                matches.Add(new Match
+                for (int j = i + 1; j < availableTeams.Count; j++)
                 {
-                    Id = Guid.NewGuid(),
-                    CompetitionId = competitionId,
-                    HomeTeamId = team.Id,
-                    AwayTeamId = opponent.Id,
-                    MatchDay = _random.Next(1, 9),
-                    IsPlayed = false
-                });
+                    var away = availableTeams[j];
 
-                existingPairs.Add(key1);
-                matchesNeeded--;
+                    if (matchesPerTeam[away.Id] >= 8)
+                        continue;
+
+                    var key1 = $"{home.Id}-{away.Id}";
+                    var key2 = $"{away.Id}-{home.Id}";
+
+                    if (playedPairs.Contains(key1) || playedPairs.Contains(key2))
+                        continue;
+
+                    matches.Add(new Match
+                    {
+                        Id = Guid.NewGuid(),
+                        CompetitionId = competitionId,
+                        HomeTeamId = home.Id,
+                        AwayTeamId = away.Id,
+                        MatchDay = matchDay,
+                        IsPlayed = false
+                    });
+
+                    playedPairs.Add(key1);
+
+                    matchesPerTeam[home.Id]++;
+                    matchesPerTeam[away.Id]++;
+
+                    break;
+                }
             }
+
+            matchDay++;
+
+            // Safety to prevent infinite loop
+            if (matchDay > 20)
+                break;
         }
 
         _context.Matches.AddRange(matches);
         await _context.SaveChangesAsync();
     }
-
     // ✅ STEP 2: SIMULATE MATCHES
     public async Task<SimulationResponseDto> SimulateCompetition(Guid competitionId)
     {
