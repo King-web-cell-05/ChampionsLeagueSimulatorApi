@@ -18,22 +18,32 @@ public class SimulationService
         _tableService = tableService;
     }
 
-    // ✅ STEP 1: GENERATE 8 MATCHES PER TEAM
+    // ✅ STEP 1: GENERATE 8 MATCHES PER TEAM (ONLY 8 RANDOM TEAMS)
     public async Task GenerateLeagueFixtures(Guid competitionId)
     {
-        var teams = await _context.CompetitionTeams
+        var allTeams = await _context.CompetitionTeams
             .Where(ct => ct.CompetitionId == competitionId)
             .Select(ct => ct.Team)
             .ToListAsync();
 
-        if (teams.Count < 2)
-            return;
+        if (allTeams.Count < 8)
+            throw new Exception("At least 8 teams are required");
+
+        // 🎯 Pick ONLY 8 RANDOM TEAMS
+        var teams = allTeams
+            .OrderBy(x => Guid.NewGuid())
+            .Take(8)
+            .ToList();
+
+        // 🧹 Clear old fixtures (VERY IMPORTANT)
+        var existingMatches = _context.Matches
+            .Where(m => m.CompetitionId == competitionId);
+
+        _context.Matches.RemoveRange(existingMatches);
+        await _context.SaveChangesAsync();
 
         var matches = new List<Match>();
         var playedPairs = new HashSet<string>();
-
-        // Shuffle teams for randomness
-        teams = teams.OrderBy(x => Guid.NewGuid()).ToList();
 
         // Track matches per team
         var matchesPerTeam = teams.ToDictionary(t => t.Id, t => 0);
@@ -88,7 +98,7 @@ public class SimulationService
 
             matchDay++;
 
-            // Safety to prevent infinite loop
+            // 🛑 Safety to prevent infinite loop
             if (matchDay > 20)
                 break;
         }
@@ -96,6 +106,7 @@ public class SimulationService
         _context.Matches.AddRange(matches);
         await _context.SaveChangesAsync();
     }
+
     // ✅ STEP 2: SIMULATE MATCHES
     public async Task<SimulationResponseDto> SimulateCompetition(Guid competitionId)
     {
