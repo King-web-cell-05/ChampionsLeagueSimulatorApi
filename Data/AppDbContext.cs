@@ -1,21 +1,29 @@
-﻿using ChampionsLeagueSimulatorAPI.Entities;
+﻿
+using ChampionsLeagueSimulatorAPI.Entities;
 using Microsoft.EntityFrameworkCore;
 
 namespace ChampionsLeagueSimulatorAPI.Data;
 
 public class AppDbContext : DbContext
 {
-    public AppDbContext(DbContextOptions options) : base(options)
+    public AppDbContext(DbContextOptions<AppDbContext> options)
+        : base(options)
     {
     }
 
-    public DbSet<Team> Teams { get; set; }
-    public DbSet<Competition> Competitions { get; set; }
-    public DbSet<Match> Matches { get; set; }
-    public DbSet<CompetitionTeam> CompetitionTeams { get; set; }
+    public DbSet<Team> Teams => Set<Team>();
+
+    public DbSet<Competition> Competitions => Set<Competition>();
+
+    public DbSet<Match> Matches => Set<Match>();
+
+    public DbSet<CompetitionTeam> CompetitionTeams =>
+        Set<CompetitionTeam>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        base.OnModelCreating(modelBuilder);
+
         modelBuilder.Entity<Match>()
             .HasOne(m => m.HomeTeam)
             .WithMany()
@@ -34,9 +42,12 @@ public class AppDbContext : DbContext
             .HasForeignKey(m => m.CompetitionId)
             .OnDelete(DeleteBehavior.Restrict);
 
-        // ✅ COMPOSITE KEY CONFIG
         modelBuilder.Entity<CompetitionTeam>()
-            .HasKey(ct => new { ct.CompetitionId, ct.TeamId });
+            .HasKey(ct => new
+            {
+                ct.CompetitionId,
+                ct.TeamId
+            });
 
         modelBuilder.Entity<CompetitionTeam>()
             .HasOne(ct => ct.Team)
