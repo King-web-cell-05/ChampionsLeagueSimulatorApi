@@ -1,6 +1,11 @@
-﻿namespace ChampionsLeagueSimulatorAPI.DTOs;
+﻿
+using System.ComponentModel.DataAnnotations;
+
+namespace ChampionsLeagueSimulatorAPI.DTOs;
 
 public class CreateCompetitionRequest
 {
-    public string Name { get; set; }
+    [Required]
+    [MaxLength(100)]
+    public string Name { get; set; } = string.Empty;
 }

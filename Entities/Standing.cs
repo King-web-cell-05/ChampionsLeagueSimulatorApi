@@ -1,4 +1,5 @@
-﻿namespace ChampionsLeagueSimulatorAPI.Entities;
+﻿
+namespace ChampionsLeagueSimulatorAPI.Entities;
 
 public class Standing
 {
@@ -8,7 +9,7 @@ public class Standing
 
     public Guid TeamId { get; set; }
 
-    public Team Team { get; set; }
+    public Team Team { get; set; } = null!;
 
     public int Played { get; set; }
 

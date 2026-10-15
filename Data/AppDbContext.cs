@@ -17,6 +17,8 @@ public class AppDbContext : DbContext
 
     public DbSet<Match> Matches => Set<Match>();
 
+    public DbSet<User> Users => Set<User>();
+
     public DbSet<CompetitionTeam> CompetitionTeams =>
         Set<CompetitionTeam>();
 
