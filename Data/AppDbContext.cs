@@ -22,28 +22,34 @@ public class AppDbContext : DbContext
     public DbSet<CompetitionTeam> CompetitionTeams =>
         Set<CompetitionTeam>();
 
+    public DbSet<Standing> Standings => Set<Standing>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
 
+        // Match -> Home Team
         modelBuilder.Entity<Match>()
             .HasOne(m => m.HomeTeam)
             .WithMany()
             .HasForeignKey(m => m.HomeTeamId)
             .OnDelete(DeleteBehavior.Restrict);
 
+        // Match -> Away Team
         modelBuilder.Entity<Match>()
             .HasOne(m => m.AwayTeam)
             .WithMany()
             .HasForeignKey(m => m.AwayTeamId)
             .OnDelete(DeleteBehavior.Restrict);
 
+        // Match -> Competition
         modelBuilder.Entity<Match>()
             .HasOne(m => m.Competition)
             .WithMany(c => c.Matches)
             .HasForeignKey(m => m.CompetitionId)
             .OnDelete(DeleteBehavior.Restrict);
 
+        // CompetitionTeam composite primary key
         modelBuilder.Entity<CompetitionTeam>()
             .HasKey(ct => new
             {
@@ -51,14 +57,32 @@ public class AppDbContext : DbContext
                 ct.TeamId
             });
 
+        // CompetitionTeam -> Team
         modelBuilder.Entity<CompetitionTeam>()
             .HasOne(ct => ct.Team)
             .WithMany()
-            .HasForeignKey(ct => ct.TeamId);
+            .HasForeignKey(ct => ct.TeamId)
+            .OnDelete(DeleteBehavior.Restrict);
 
+        // CompetitionTeam -> Competition
         modelBuilder.Entity<CompetitionTeam>()
             .HasOne(ct => ct.Competition)
             .WithMany()
-            .HasForeignKey(ct => ct.CompetitionId);
+            .HasForeignKey(ct => ct.CompetitionId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // Standing -> Team
+        modelBuilder.Entity<Standing>()
+            .HasOne(s => s.Team)
+            .WithMany()
+            .HasForeignKey(s => s.TeamId)
+            .OnDelete(DeleteBehavior.Restrict);
+
+        // Standing -> Competition
+        modelBuilder.Entity<Standing>()
+            .HasOne<Competition>()
+            .WithMany()
+            .HasForeignKey(s => s.CompetitionId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }
