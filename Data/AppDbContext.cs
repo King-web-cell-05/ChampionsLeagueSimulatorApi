@@ -40,7 +40,7 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<Match>()
             .HasOne(m => m.Competition)
-            .WithMany()
+            .WithMany(c => c.Matches)
             .HasForeignKey(m => m.CompetitionId)
             .OnDelete(DeleteBehavior.Restrict);
 
