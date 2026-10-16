@@ -28,6 +28,11 @@ public class AppDbContext : DbContext
     {
         base.OnModelCreating(modelBuilder);
 
+        // User email must be unique
+        modelBuilder.Entity<User>()
+            .HasIndex(u => u.Email)
+            .IsUnique();
+
         // Match -> Home Team
         modelBuilder.Entity<Match>()
             .HasOne(m => m.HomeTeam)
