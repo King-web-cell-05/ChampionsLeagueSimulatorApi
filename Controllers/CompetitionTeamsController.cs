@@ -1,96 +1,70 @@
-﻿using Microsoft.AspNetCore.Mvc;
-using ChampionsLeagueSimulatorAPI.Data;
-using ChampionsLeagueSimulatorAPI.Entities;
-using ChampionsLeagueSimulatorAPI.DTOs;
-using Microsoft.EntityFrameworkCore;
-
-namespace ChampionsLeagueSimulatorAPI.Controllers;
-
-[ApiController]
-[Route("api/[controller]")]
-public class CompetitionTeamsController : ControllerBase
+﻿
+[HttpPost]
+public async Task<IActionResult> AddTeam(AddCompetitionTeamRequest request)
 {
-    private readonly AppDbContext _context;
+    // Check whether the competition exists
+    var competitionExists = await _context.Competitions
+        .AnyAsync(c => c.Id == request.CompetitionId);
 
-    public CompetitionTeamsController(AppDbContext context)
+    if (!competitionExists)
     {
-        _context = context;
-    }
-
-    // ✅ Add a team to a competition
-    [HttpPost]
-    public async Task<IActionResult> AddTeam(AddCompetitionTeamRequest request)
-    {
-        // Check if the team is already in this competition
-        var exists = await _context.CompetitionTeams
-            .AnyAsync(ct =>
-                ct.CompetitionId == request.CompetitionId &&
-                ct.TeamId == request.TeamId);
-
-        if (exists)
-            return BadRequest("Team already exists in this competition.");
-
-        // Create the join entity
-        var entry = new CompetitionTeam
+        return NotFound(new
         {
-            CompetitionId = request.CompetitionId,
-            TeamId = request.TeamId
-        };
-
-        _context.CompetitionTeams.Add(entry);
-        await _context.SaveChangesAsync();
-
-        // Load related entities
-        await _context.Entry(entry).Reference(ct => ct.Competition).LoadAsync();
-        await _context.Entry(entry).Reference(ct => ct.Team).LoadAsync();
-
-        // Map to DTO
-        var response = new CompetitionTeamResponse
-        {
-            CompetitionId = entry.CompetitionId,
-            CompetitionName = entry.Competition?.Name ?? "",
-            TeamId = entry.TeamId,
-            TeamName = entry.Team?.Name ?? ""
-        };
-
-        return Ok(response);
+            message = "The specified competition does not exist."
+        });
     }
 
-    // ✅ Get all teams in a competition
-    [HttpGet("{competitionId}")]
-    public async Task<IActionResult> GetTeamsByCompetition(Guid competitionId)
+    // Check whether the team exists
+    var teamExists = await _context.Teams
+        .AnyAsync(t => t.Id == request.TeamId);
+
+    if (!teamExists)
     {
-        var entries = await _context.CompetitionTeams
-            .Where(ct => ct.CompetitionId == competitionId)
-            .Include(ct => ct.Team)
-            .Include(ct => ct.Competition)
-            .ToListAsync();
-
-        var response = entries.Select(ct => new CompetitionTeamResponse
+        return NotFound(new
         {
-            CompetitionId = ct.CompetitionId,
-            CompetitionName = ct.Competition?.Name ?? "",
-            TeamId = ct.TeamId,
-            TeamName = ct.Team?.Name ?? ""
-        }).ToList();
-
-        return Ok(response);
+            message = "The specified team does not exist."
+        });
     }
 
-    // ✅ Remove a team from a competition
-    [HttpDelete]
-    public async Task<IActionResult> RemoveTeam(Guid competitionId, Guid teamId)
+    // Check whether the team is already in this competition
+    var exists = await _context.CompetitionTeams
+        .AnyAsync(ct =>
+            ct.CompetitionId == request.CompetitionId &&
+            ct.TeamId == request.TeamId);
+
+    if (exists)
     {
-        var entry = await _context.CompetitionTeams
-            .FirstOrDefaultAsync(ct =>
-                ct.CompetitionId == competitionId && ct.TeamId == teamId);
-
-        if (entry == null)
-            return NotFound();
-
-        _context.CompetitionTeams.Remove(entry);
-        await _context.SaveChangesAsync();
-
-        return NoContent();
+        return BadRequest(
+            "Team already exists in this competition.");
     }
+
+    // Create the relationship
+    var entry = new CompetitionTeam
+    {
+        CompetitionId = request.CompetitionId,
+        TeamId = request.TeamId
+    };
+
+    _context.CompetitionTeams.Add(entry);
+    await _context.SaveChangesAsync();
+
+    // Load related entities
+    await _context.Entry(entry)
+        .Reference(ct => ct.Competition)
+        .LoadAsync();
+
+    await _context.Entry(entry)
+        .Reference(ct => ct.Team)
+        .LoadAsync();
+
+    // Return the response
+    var response = new CompetitionTeamResponse
+    {
+        CompetitionId = entry.CompetitionId,
+        CompetitionName = entry.Competition?.Name ?? "",
+        TeamId = entry.TeamId,
+        TeamName = entry.Team?.Name ?? ""
+    };
+
+    return Ok(response);
 }
