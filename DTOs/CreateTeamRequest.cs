@@ -1,5 +1,4 @@
-﻿
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 
 namespace ChampionsLeagueSimulatorAPI.DTOs;
 
@@ -13,6 +12,6 @@ public class CreateTeamRequest
     [MaxLength(80)]
     public string Country { get; set; } = string.Empty;
 
-    [Range(0, 10000)]
-    public int Coefficient { get; set; }
+    [Range(typeof(decimal), "0", "200")]
+    public decimal Coefficient { get; set; }
 }

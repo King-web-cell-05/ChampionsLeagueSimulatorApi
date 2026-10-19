@@ -8,5 +8,5 @@ public class Team
 
     public string Country { get; set; } = string.Empty;
 
-    public int Coefficient { get; set; }
+    public decimal Coefficient { get; set; }
 }
