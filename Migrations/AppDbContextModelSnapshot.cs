@@ -149,8 +149,9 @@ namespace ChampionsLeagueSimulatorApi.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<int>("Coefficient")
-                        .HasColumnType("integer");
+                    b.Property<decimal>("Coefficient")
+                        .HasPrecision(7, 3)
+                        .HasColumnType("numeric(7,3)");
 
                     b.Property<string>("Country")
                         .IsRequired()
