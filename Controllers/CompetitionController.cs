@@ -1,4 +1,5 @@
-﻿using ChampionsLeagueSimulatorAPI.Data;
+﻿
+using ChampionsLeagueSimulatorAPI.Data;
 using ChampionsLeagueSimulatorAPI.DTOs;
 using ChampionsLeagueSimulatorAPI.Entities;
 using ChampionsLeagueSimulatorAPI.Services;
@@ -22,13 +23,37 @@ public class CompetitionController : ControllerBase
         _competitionService = competitionService;
     }
 
-    [HttpPost]
-    public async Task<IActionResult> CreateCompetition(CreateCompetitionRequest request)
+    // GET: api/Competition
+    [HttpGet]
+    public async Task<IActionResult> GetCompetitions()
     {
+        var competitions = await _context.Competitions
+            .AsNoTracking()
+            .OrderByDescending(c => c.CreatedDate)
+            .ToListAsync();
+
+        return Ok(competitions);
+    }
+
+    // POST: api/Competition
+    [HttpPost]
+    public async Task<IActionResult> CreateCompetition(
+        CreateCompetitionRequest request)
+    {
+        var name = request.Name.Trim();
+
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return BadRequest(new
+            {
+                message = "Competition name is required."
+            });
+        }
+
         var competition = new Competition
         {
             Id = Guid.NewGuid(),
-            Name = request.Name
+            Name = name
         };
 
         _context.Competitions.Add(competition);
@@ -37,11 +62,16 @@ public class CompetitionController : ControllerBase
         return Ok(competition);
     }
 
-    // ✅ DELETE TEAM FROM COMPETITION
+    // DELETE: api/Competition/{competitionId}/team/{teamId}
     [HttpDelete("{competitionId}/team/{teamId}")]
-    public async Task<IActionResult> RemoveTeam(Guid competitionId, Guid teamId)
+    public async Task<IActionResult> RemoveTeam(
+        Guid competitionId,
+        Guid teamId)
     {
-        await _competitionService.RemoveTeamFromCompetition(competitionId, teamId);
+        await _competitionService.RemoveTeamFromCompetition(
+            competitionId,
+            teamId);
+
         return Ok("Team removed from competition successfully.");
     }
 }
