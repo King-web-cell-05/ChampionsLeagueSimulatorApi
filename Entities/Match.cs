@@ -1,5 +1,4 @@
-﻿
-namespace ChampionsLeagueSimulatorAPI.Entities;
+﻿namespace ChampionsLeagueSimulatorAPI.Entities;
 
 public class Match
 {
@@ -16,6 +15,10 @@ public class Match
     public Guid AwayTeamId { get; set; }
 
     public Team AwayTeam { get; set; } = null!;
+
+    // Official kickoff time stored in UTC.
+    // Nullable to preserve compatibility with older matches.
+    public DateTime? KickoffUtc { get; set; }
 
     public int? HomeScore { get; set; }
 
