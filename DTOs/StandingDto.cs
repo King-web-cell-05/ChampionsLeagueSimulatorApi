@@ -1,4 +1,4 @@
-﻿namespace ChampionsLeagueSimulatorApi.DTOs
+﻿namespace ChampionsLeagueSimulatorApi.DTOs;
 {
     public class StandingDto
     {
