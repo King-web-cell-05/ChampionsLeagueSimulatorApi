@@ -87,6 +87,9 @@ namespace ChampionsLeagueSimulatorApi.Migrations
                     b.Property<bool>("IsPlayed")
                         .HasColumnType("boolean");
 
+                    b.Property<DateTime?>("KickoffUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<int>("MatchDay")
                         .HasColumnType("integer");
 
