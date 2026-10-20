@@ -16,17 +16,27 @@ public class MatchesController : ControllerBase
         _context = context;
     }
 
-
-    // ✅ GET all matches for a competition
-    [HttpGet("competition/{competitionId}")]
+    // GET: api/Matches/competition/{competitionId}
+    // Get all matches for a competition.
+    [HttpGet("competition/{competitionId:guid}")]
     public async Task<IActionResult> GetMatches(Guid competitionId)
     {
+        if (competitionId == Guid.Empty)
+        {
+            return BadRequest(new
+            {
+                message = "Invalid competition ID."
+            });
+        }
+
         var matches = await _context.Matches
+            .AsNoTracking()
             .Where(m => m.CompetitionId == competitionId)
             .Include(m => m.HomeTeam)
             .Include(m => m.AwayTeam)
             .Include(m => m.Competition)
             .OrderBy(m => m.MatchDay)
+            .ThenBy(m => m.KickoffUtc)
             .ToListAsync();
 
         var result = matches.Select(m => new MatchDto
@@ -34,12 +44,18 @@ public class MatchesController : ControllerBase
             Id = m.Id,
             CompetitionId = m.CompetitionId,
             CompetitionName = m.Competition?.Name ?? "Unknown",
+
             HomeTeamId = m.HomeTeamId,
             HomeTeamName = m.HomeTeam?.Name ?? "Unknown",
+
             AwayTeamId = m.AwayTeamId,
             AwayTeamName = m.AwayTeam?.Name ?? "Unknown",
+
+            KickoffUtc = m.KickoffUtc,
+
             HomeScore = m.HomeScore,
             AwayScore = m.AwayScore,
+
             IsPlayed = m.IsPlayed,
             MatchDay = m.MatchDay
         }).ToList();
@@ -47,14 +63,40 @@ public class MatchesController : ControllerBase
         return Ok(result);
     }
 
-    // existing manual result endpoint
-    [HttpPost("{matchId}/result")]
-    public async Task<IActionResult> AddResult(Guid matchId, int homeScore, int awayScore)
+    // POST: api/Matches/{matchId}/result?homeScore=2&awayScore=1
+    // Record a match result.
+    [HttpPost("{matchId:guid}/result")]
+    public async Task<IActionResult> AddResult(
+        Guid matchId,
+        [FromQuery] int homeScore,
+        [FromQuery] int awayScore)
     {
-        var match = await _context.Matches.FindAsync(matchId);
+        if (matchId == Guid.Empty)
+        {
+            return BadRequest(new
+            {
+                message = "Invalid match ID."
+            });
+        }
 
-        if (match == null)
-            return NotFound();
+        if (homeScore < 0 || awayScore < 0)
+        {
+            return BadRequest(new
+            {
+                message = "Scores cannot be negative."
+            });
+        }
+
+        var match = await _context.Matches
+            .FirstOrDefaultAsync(m => m.Id == matchId);
+
+        if (match is null)
+        {
+            return NotFound(new
+            {
+                message = "Match not found."
+            });
+        }
 
         match.HomeScore = homeScore;
         match.AwayScore = awayScore;
@@ -62,19 +104,54 @@ public class MatchesController : ControllerBase
 
         await _context.SaveChangesAsync();
 
-        return Ok(match);
+        return Ok(new
+        {
+            match.Id,
+            match.HomeTeamId,
+            match.AwayTeamId,
+            match.KickoffUtc,
+            match.HomeScore,
+            match.AwayScore,
+            match.IsPlayed,
+            match.MatchDay
+        });
     }
-    [HttpDelete("competition/{competitionId}")]
-    public async Task<IActionResult> DeleteMatchesByCompetition(Guid competitionId)
+
+    // DELETE: api/Matches/competition/{competitionId}
+    // Deletes every match in the specified competition.
+    [HttpDelete("competition/{competitionId:guid}")]
+    public async Task<IActionResult> DeleteMatchesByCompetition(
+        Guid competitionId)
     {
-        var matches = _context.Matches.Where(m => m.CompetitionId == competitionId);
+        if (competitionId == Guid.Empty)
+        {
+            return BadRequest(new
+            {
+                message = "Invalid competition ID."
+            });
+        }
 
-        if (!matches.Any())
-            return NotFound("No matches found for this competition");
+        var matches = _context.Matches
+            .Where(m => m.CompetitionId == competitionId);
 
-        _context.Matches.RemoveRange(matches);
+        if (!await matches.AnyAsync())
+        {
+            return NotFound(new
+            {
+                message = "No matches found for this competition."
+            });
+        }
+
+        var matchList = await matches.ToListAsync();
+
+        _context.Matches.RemoveRange(matchList);
         await _context.SaveChangesAsync();
 
-        return Ok($"All matches for competition {competitionId} have been deleted.");
+        return Ok(new
+        {
+            message = "All matches for the competition have been deleted.",
+            competitionId,
+            deletedCount = matchList.Count
+        });
     }
 }
