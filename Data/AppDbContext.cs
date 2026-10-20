@@ -21,6 +21,9 @@ public class AppDbContext : DbContext
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
+        modelBuilder.Entity<Match>()
+    .Property(m => m.KickoffUtc)
+    .HasColumnType("timestamp with time zone");
 
         // Store coefficients with three decimal places.
         modelBuilder.Entity<Team>()
