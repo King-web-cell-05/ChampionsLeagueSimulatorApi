@@ -1,6 +1,6 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using ChampionsLeagueSimulatorAPI.Services;
-using ChampionsLeagueSimulatorApi.DTOs;
+using ChampionsLeagueSimulatorAPI.DTOs;
 
 namespace ChampionsLeagueSimulatorAPI.Controllers;
 
