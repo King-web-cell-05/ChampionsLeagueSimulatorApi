@@ -1,7 +1,9 @@
 ﻿
 using ChampionsLeagueSimulatorAPI.Data;
 using ChampionsLeagueSimulatorAPI.Entities;
+using Google.OrTools.Sat;
 using Microsoft.EntityFrameworkCore;
+using System.Data;
 
 namespace ChampionsLeagueSimulatorAPI.Services;
 
@@ -11,8 +13,7 @@ public class DrawService
     private const int PotCount = 4;
     private const int TeamsPerPot = 9;
     private const int MatchdayCount = 8;
-    private const int MaxSearchNodes = 500_000;
-    private const int MaxAttempts = 12;
+    private const int RequiredFixtures = 144;
 
     private readonly AppDbContext _context;
 
@@ -21,13 +22,11 @@ public class DrawService
         _context = context;
     }
 
-    public async Task<List<Match>> GenerateLeagueFixtures(Guid competitionId)
+    public async Task<List<Match>> GenerateLeagueFixtures(
+        Guid competitionId)
     {
         if (competitionId == Guid.Empty)
             throw new ArgumentException("Invalid competition ID.");
-
-        await using var transaction =
-            await _context.Database.BeginTransactionAsync();
 
         var competitionExists = await _context.Competitions
             .AnyAsync(c => c.Id == competitionId);
@@ -35,81 +34,227 @@ public class DrawService
         if (!competitionExists)
             throw new KeyNotFoundException("Competition not found.");
 
-        var hasExistingMatches = await _context.Matches
-            .AnyAsync(m => m.CompetitionId == competitionId);
-
-        if (hasExistingMatches)
+        if (await _context.Matches.AnyAsync(
+            m => m.CompetitionId == competitionId))
         {
             throw new InvalidOperationException(
                 "This competition already has fixtures. " +
-                "Existing fixtures and results have not been changed.");
+                "Existing matches have not been changed.");
         }
 
         var teams = await _context.CompetitionTeams
             .Where(ct => ct.CompetitionId == competitionId)
             .Select(ct => ct.Team)
-            .Distinct()
+            .AsNoTracking()
             .ToListAsync();
 
-        if (teams.Count != RequiredTeams)
+        if (teams.Count != RequiredTeams ||
+            teams.Select(t => t.Id).Distinct().Count() != RequiredTeams)
         {
             throw new InvalidOperationException(
-                $"The league phase requires exactly {RequiredTeams} clubs. " +
-                $"Found {teams.Count}.");
+                "Exactly 36 unique clubs must be registered.");
         }
 
-        if (teams.Select(t => t.Id).Distinct().Count() != RequiredTeams)
+        if (teams.Any(t =>
+            string.IsNullOrWhiteSpace(t.Name) ||
+            string.IsNullOrWhiteSpace(t.Country)))
         {
             throw new InvalidOperationException(
-                "Duplicate club registrations were detected.");
+                "Every club must have a name and country.");
         }
 
-        if (teams.Any(t => string.IsNullOrWhiteSpace(t.Country)))
-        {
-            throw new InvalidOperationException(
-                "Every club must have a country assigned before the draw.");
-        }
-
-        // Assign the nine highest-coefficient clubs to Pot 1,
-        // the next nine to Pot 2, and so on.
-        var orderedTeams = teams
+        // Assign coefficient-based pots.
+        teams = teams
             .OrderByDescending(t => t.Coefficient)
-            .ThenBy(t => t.Name, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(t => t.Name)
             .ToList();
 
-        var potByTeamId = new Dictionary<Guid, int>();
+        var pots = Enumerable.Range(0, RequiredTeams)
+            .Select(i => i / TeamsPerPot)
+            .ToArray();
 
-        for (var i = 0; i < orderedTeams.Count; i++)
-            potByTeamId[orderedTeams[i].Id] = i / TeamsPerPot;
+        var countries = teams
+            .Select(t => t.Country.Trim().ToUpperInvariant())
+            .ToArray();
 
-        for (var attempt = 1; attempt <= MaxAttempts; attempt++)
+        var model = new CpModel();
+
+        // Key: (matchday, home team index, away team index)
+        var variables = new Dictionary<
+            (int Day, int Home, int Away), BoolVar>();
+
+        for (int day = 0; day < MatchdayCount; day++)
         {
-            var search = new DrawSearch(
-                competitionId,
-                orderedTeams,
-                potByTeamId,
-                MaxSearchNodes);
+            for (int home = 0; home < RequiredTeams; home++)
+            {
+                for (int away = 0; away < RequiredTeams; away++)
+                {
+                    if (home == away)
+                        continue;
 
-            if (!search.TryGenerate(out var fixtures))
-                continue;
+                    // No same-country opponents.
+                    if (countries[home] == countries[away])
+                        continue;
 
-            // Final validation happens before any database writes.
-            ValidateDraw(fixtures, orderedTeams, potByTeamId);
-
-            _context.Matches.AddRange(fixtures);
-            await _context.SaveChangesAsync();
-            await transaction.CommitAsync();
-
-            return fixtures;
+                    variables[(day, home, away)] =
+                        model.NewBoolVar($"m_{day}_{home}_{away}");
+                }
+            }
         }
 
-        throw new InvalidOperationException(
-            "A valid draw could not be constructed within the search limits. " +
-            "No fixtures were saved. Check club countries and try again.");
+        // Each club plays exactly once per matchday.
+        for (int day = 0; day < MatchdayCount; day++)
+        {
+            for (int team = 0; team < RequiredTeams; team++)
+            {
+                var participation = variables
+                    .Where(v =>
+                        v.Key.Day == day &&
+                        (v.Key.Home == team ||
+                         v.Key.Away == team))
+                    .Select(v => v.Value)
+                    .ToArray();
+
+                model.Add(LinearExpr.Sum(participation) == 1);
+            }
+        }
+
+        // Each pair of clubs may meet at most once.
+        for (int a = 0; a < RequiredTeams; a++)
+        {
+            for (int b = a + 1; b < RequiredTeams; b++)
+            {
+                var pairMatches = variables
+                    .Where(v =>
+                        (v.Key.Home == a && v.Key.Away == b) ||
+                        (v.Key.Home == b && v.Key.Away == a))
+                    .Select(v => v.Value)
+                    .ToArray();
+
+                model.Add(LinearExpr.Sum(pairMatches) <= 1);
+            }
+        }
+
+        // One home and one away opponent from each pot.
+        for (int team = 0; team < RequiredTeams; team++)
+        {
+            for (int pot = 0; pot < PotCount; pot++)
+            {
+                int currentTeam = team;
+                int currentPot = pot;
+
+                var homeGames = variables
+                    .Where(v =>
+                        v.Key.Home == currentTeam &&
+                        pots[v.Key.Away] == currentPot)
+                    .Select(v => v.Value)
+                    .ToArray();
+
+                var awayGames = variables
+                    .Where(v =>
+                        v.Key.Away == currentTeam &&
+                        pots[v.Key.Home] == currentPot)
+                    .Select(v => v.Value)
+                    .ToArray();
+
+                model.Add(LinearExpr.Sum(homeGames) == 1);
+                model.Add(LinearExpr.Sum(awayGames) == 1);
+            }
+        }
+
+        // No more than two opponents from any other country.
+        var distinctCountries = countries.Distinct().ToArray();
+
+        for (int team = 0; team < RequiredTeams; team++)
+        {
+            foreach (var country in distinctCountries)
+            {
+                if (country == countries[team])
+                    continue;
+
+                int currentTeam = team;
+                string currentCountry = country;
+
+                var games = variables
+                    .Where(v =>
+                        (v.Key.Home == currentTeam &&
+                         countries[v.Key.Away] == currentCountry) ||
+                        (v.Key.Away == currentTeam &&
+                         countries[v.Key.Home] == currentCountry))
+                    .Select(v => v.Value)
+                    .ToArray();
+
+                model.Add(LinearExpr.Sum(games) <= 2);
+            }
+        }
+
+        var solver = new CpSolver
+        {
+            StringParameters =
+                "max_time_in_seconds:60 " +
+                "num_search_workers:8 " +
+                $"random_seed:{Random.Shared.Next(1, 1000000)} " +
+                "randomize_search:true"
+        };
+
+        // A time limit prevents Swagger from waiting indefinitely.
+        var status = solver.Solve(model);
+
+        if (status != CpSolverStatus.Optimal &&
+            status != CpSolverStatus.Feasible)
+        {
+            throw new InvalidOperationException(
+                $"The random draw did not complete. Solver status: {status}. " +
+                "No matches were saved. Try again or review the club restrictions.");
+        }
+
+        var fixtures = new List<Match>();
+
+        foreach (var entry in variables)
+        {
+            if (solver.Value(entry.Value) != 1)
+                continue;
+
+            fixtures.Add(new Match
+            {
+                Id = Guid.NewGuid(),
+                CompetitionId = competitionId,
+                HomeTeamId = teams[entry.Key.Home].Id,
+                AwayTeamId = teams[entry.Key.Away].Id,
+                MatchDay = entry.Key.Day + 1,
+                KickoffUtc = null,
+                HomeScore = null,
+                AwayScore = null,
+                IsPlayed = false
+            });
+        }
+
+        ValidateDraw(fixtures, teams, pots, countries);
+
+        // Begin a serializable transaction before checking again.
+        // This protects against concurrent requests creating two draws.
+        await using var transaction =
+            await _context.Database.BeginTransactionAsync(
+                IsolationLevel.Serializable);
+
+        if (await _context.Matches.AnyAsync(
+            m => m.CompetitionId == competitionId))
+        {
+            throw new InvalidOperationException(
+                "Fixtures were created by another request. " +
+                "No additional matches were saved.");
+        }
+
+        _context.Matches.AddRange(fixtures);
+        await _context.SaveChangesAsync();
+        await transaction.CommitAsync();
+
+        return fixtures;
     }
 
-    // Retained for compatibility with existing callers.
-    public Task<List<Match>> GenerateDoubleRoundRobin(Guid competitionId)
+    // Compatibility with existing callers.
+    public Task<List<Match>> GenerateDoubleRoundRobin(
+        Guid competitionId)
     {
         return GenerateLeagueFixtures(competitionId);
     }
@@ -117,436 +262,116 @@ public class DrawService
     private static void ValidateDraw(
         List<Match> fixtures,
         List<Team> teams,
-        Dictionary<Guid, int> potByTeamId)
+        int[] pots,
+        string[] countries)
     {
-        if (fixtures.Count != 144)
+        if (fixtures.Count != RequiredFixtures)
             throw new InvalidOperationException(
-                "Draw validation failed: expected 144 fixtures.");
+                "Invalid draw: expected 144 fixtures.");
 
-        var teamIds = teams.Select(t => t.Id).ToHashSet();
+        var teamIndex = teams
+            .Select((team, index) => new { team.Id, index })
+            .ToDictionary(x => x.Id, x => x.index);
 
-        foreach (var team in teams)
-        {
-            var teamMatches = fixtures
-                .Where(m =>
-                    m.HomeTeamId == team.Id ||
-                    m.AwayTeamId == team.Id)
-                .ToList();
-
-            if (teamMatches.Count != 8)
-                throw new InvalidOperationException(
-                    $"Draw validation failed for {team.Name}: expected eight matches.");
-
-            if (teamMatches.Count(m => m.HomeTeamId == team.Id) != 4 ||
-                teamMatches.Count(m => m.AwayTeamId == team.Id) != 4)
-            {
-                throw new InvalidOperationException(
-                    $"Draw validation failed for {team.Name}: expected four home and four away matches.");
-            }
-
-            var opponents = teamMatches
-                .Select(m => m.HomeTeamId == team.Id
-                    ? m.AwayTeamId
-                    : m.HomeTeamId)
-                .ToList();
-
-            if (opponents.Distinct().Count() != 8)
-                throw new InvalidOperationException(
-                    $"Draw validation failed for {team.Name}: duplicate opponents detected.");
-
-            foreach (var pot in Enumerable.Range(0, PotCount))
-            {
-                var matchesAgainstPot = teamMatches
-                    .Where(m =>
-                    {
-                        var opponentId = m.HomeTeamId == team.Id
-                            ? m.AwayTeamId
-                            : m.HomeTeamId;
-
-                        return potByTeamId[opponentId] == pot;
-                    })
-                    .ToList();
-
-                if (matchesAgainstPot.Count != 2 ||
-                    matchesAgainstPot.Count(m => m.HomeTeamId == team.Id) != 1 ||
-                    matchesAgainstPot.Count(m => m.AwayTeamId == team.Id) != 1)
-                {
-                    throw new InvalidOperationException(
-                        $"Draw validation failed for {team.Name}: " +
-                        $"expected one home and one away opponent from Pot {pot + 1}.");
-                }
-            }
-        }
-
-        for (var matchday = 1; matchday <= MatchdayCount; matchday++)
-        {
-            var round = fixtures
-                .Where(m => m.MatchDay == matchday)
-                .ToList();
-
-            if (round.Count != 18)
-                throw new InvalidOperationException(
-                    $"Draw validation failed: Matchday {matchday} must contain 18 fixtures.");
-
-            var participants = round
-                .SelectMany(m => new[] { m.HomeTeamId, m.AwayTeamId })
-                .ToList();
-
-            if (participants.Count != 36 ||
-                participants.Distinct().Count() != 36 ||
-                participants.Any(id => !teamIds.Contains(id)))
-            {
-                throw new InvalidOperationException(
-                    $"Draw validation failed: Matchday {matchday} must contain every club exactly once.");
-            }
-        }
-
-        var countryByTeamId = teams.ToDictionary(
-            t => t.Id,
-            t => t.Country.Trim());
+        var uniquePairs = new HashSet<string>();
 
         foreach (var match in fixtures)
         {
-            if (match.HomeTeamId == match.AwayTeamId)
-                throw new InvalidOperationException(
-                    "Draw validation failed: a club cannot play itself.");
-
-            if (string.Equals(
-                countryByTeamId[match.HomeTeamId],
-                countryByTeamId[match.AwayTeamId],
-                StringComparison.OrdinalIgnoreCase))
+            if (!teamIndex.TryGetValue(
+                    match.HomeTeamId, out var home) ||
+                !teamIndex.TryGetValue(
+                    match.AwayTeamId, out var away))
             {
                 throw new InvalidOperationException(
-                    "Draw validation failed: clubs from the same country cannot play each other.");
+                    "Invalid draw: unknown club.");
+            }
+
+            if (home == away || countries[home] == countries[away])
+                throw new InvalidOperationException(
+                    "Invalid draw: prohibited opponent.");
+
+            var pair = home < away
+                ? $"{home}:{away}"
+                : $"{away}:{home}";
+
+            if (!uniquePairs.Add(pair))
+                throw new InvalidOperationException(
+                    "Invalid draw: repeated opponents.");
+        }
+
+        for (int day = 1; day <= MatchdayCount; day++)
+        {
+            var round = fixtures
+                .Where(m => m.MatchDay == day)
+                .ToList();
+
+            var participants = round
+                .SelectMany(m => new[]
+                {
+                    m.HomeTeamId,
+                    m.AwayTeamId
+                })
+                .ToList();
+
+            if (round.Count != 18 ||
+                participants.Distinct().Count() != RequiredTeams)
+            {
+                throw new InvalidOperationException(
+                    $"Invalid draw: matchday {day}.");
             }
         }
 
-        // No more than two opponents from any other country.
-        foreach (var team in teams)
+        for (int team = 0; team < RequiredTeams; team++)
         {
-            var opponentsByCountry = fixtures
+            var teamId = teams[team].Id;
+
+            var games = fixtures
                 .Where(m =>
-                    m.HomeTeamId == team.Id ||
-                    m.AwayTeamId == team.Id)
+                    m.HomeTeamId == teamId ||
+                    m.AwayTeamId == teamId)
+                .ToList();
+
+            if (games.Count != 8 ||
+                games.Count(m => m.HomeTeamId == teamId) != 4 ||
+                games.Count(m => m.AwayTeamId == teamId) != 4)
+            {
+                throw new InvalidOperationException(
+                    $"Invalid match balance for {teams[team].Name}.");
+            }
+
+            foreach (int pot in Enumerable.Range(0, PotCount))
+            {
+                int homeCount = games.Count(m =>
+                    m.HomeTeamId == teamId &&
+                    pots[teamIndex[m.AwayTeamId]] == pot);
+
+                int awayCount = games.Count(m =>
+                    m.AwayTeamId == teamId &&
+                    pots[teamIndex[m.HomeTeamId]] == pot);
+
+                if (homeCount != 1 || awayCount != 1)
+                {
+                    throw new InvalidOperationException(
+                        $"Invalid pot allocation for {teams[team].Name}.");
+                }
+            }
+
+            var opponentsByCountry = games
                 .Select(m =>
                 {
-                    var opponentId = m.HomeTeamId == team.Id
+                    var opponentId = m.HomeTeamId == teamId
                         ? m.AwayTeamId
                         : m.HomeTeamId;
 
-                    return countryByTeamId[opponentId];
+                    return countries[teamIndex[opponentId]];
                 })
-                .GroupBy(country => country, StringComparer.OrdinalIgnoreCase);
+                .GroupBy(c => c);
 
-            if (opponentsByCountry.Any(group => group.Count() > 2))
+            if (opponentsByCountry.Any(g => g.Count() > 2))
             {
                 throw new InvalidOperationException(
-                    $"Draw validation failed: association limit exceeded for {team.Name}.");
+                    $"Country limit exceeded for {teams[team].Name}.");
             }
         }
-    }
-
-    private sealed class DrawSearch
-    {
-        private readonly Guid _competitionId;
-        private readonly List<Team> _teams;
-        private readonly Dictionary<Guid, int> _potByTeamId;
-        private readonly Dictionary<Guid, string> _countryByTeamId;
-        private readonly Dictionary<Guid, Team> _teamById;
-        private readonly HashSet<Guid> _teamIds;
-        private readonly int _maxNodes;
-
-        private readonly Dictionary<Guid, HashSet<Guid>> _opponents = new();
-        private readonly Dictionary<Guid, int[]> _potMatchCounts = new();
-        private readonly Dictionary<Guid, int[]> _homeByPot = new();
-        private readonly Dictionary<Guid, int[]> _awayByPot = new();
-
-        private readonly Dictionary<Guid, Dictionary<string, int>>
-            _countryCounts = new();
-
-        private readonly List<Match> _fixtures = new();
-
-        private int _nodes;
-
-        public DrawSearch(
-            Guid competitionId,
-            List<Team> teams,
-            Dictionary<Guid, int> potByTeamId,
-            int maxNodes)
-        {
-            _competitionId = competitionId;
-            _teams = teams;
-            _potByTeamId = potByTeamId;
-            _maxNodes = maxNodes;
-
-            _teamIds = teams.Select(t => t.Id).ToHashSet();
-
-            _teamById = teams.ToDictionary(t => t.Id);
-            _countryByTeamId = teams.ToDictionary(
-                t => t.Id,
-                t => t.Country.Trim());
-
-            foreach (var team in teams)
-            {
-                _opponents[team.Id] = new HashSet<Guid>();
-                _potMatchCounts[team.Id] = new int[PotCount];
-                _homeByPot[team.Id] = new int[PotCount];
-                _awayByPot[team.Id] = new int[PotCount];
-
-                _countryCounts[team.Id] =
-                    new Dictionary<string, int>(
-                        StringComparer.OrdinalIgnoreCase);
-            }
-        }
-
-        public bool TryGenerate(out List<Match> fixtures)
-        {
-            fixtures = new List<Match>();
-
-            var firstMatchdayTeams = _teamIds.ToHashSet();
-
-            if (!BuildRound(1, firstMatchdayTeams))
-                return false;
-
-            if (!ValidateInternalState())
-                return false;
-
-            fixtures = _fixtures.ToList();
-            return true;
-        }
-
-        private bool BuildRound(int matchday, HashSet<Guid> remaining)
-        {
-            if (++_nodes > _maxNodes)
-                return false;
-
-            if (remaining.Count == 0)
-            {
-                if (matchday == MatchdayCount)
-                    return _fixtures.Count == 144;
-
-                return BuildRound(matchday + 1, _teamIds.ToHashSet());
-            }
-
-            // Select the team with the fewest legal fixture options.
-            Guid selectedTeamId = Guid.Empty;
-            List<FixtureOption>? selectedOptions = null;
-
-            foreach (var teamId in remaining)
-            {
-                var options = GetOptions(teamId, remaining);
-
-                if (options.Count == 0)
-                    return false;
-
-                if (selectedOptions == null ||
-                    options.Count < selectedOptions.Count)
-                {
-                    selectedTeamId = teamId;
-                    selectedOptions = options;
-
-                    if (options.Count == 1)
-                        break;
-                }
-            }
-
-            if (selectedOptions == null ||
-                selectedTeamId == Guid.Empty)
-                return false;
-
-            var shuffledOptions = selectedOptions
-                .OrderBy(_ => Random.Shared.Next())
-                .ToList();
-
-            foreach (var option in shuffledOptions)
-            {
-                if (!CanPlay(option.Home.Id, option.Away.Id))
-                    continue;
-
-                var match = new Match
-                {
-                    Id = Guid.NewGuid(),
-                    CompetitionId = _competitionId,
-                    HomeTeamId = option.Home.Id,
-                    AwayTeamId = option.Away.Id,
-                    MatchDay = matchday,
-                    KickoffUtc = null,
-                    HomeScore = null,
-                    AwayScore = null,
-                    IsPlayed = false
-                };
-
-                AddFixture(match);
-
-                remaining.Remove(option.Home.Id);
-                remaining.Remove(option.Away.Id);
-
-                if (BuildRound(matchday, remaining))
-                    return true;
-
-                remaining.Add(option.Home.Id);
-                remaining.Add(option.Away.Id);
-
-                RemoveFixture(match);
-            }
-
-            return false;
-        }
-
-        private List<FixtureOption> GetOptions(
-            Guid teamId,
-            HashSet<Guid> remaining)
-        {
-            var options = new List<FixtureOption>();
-
-            foreach (var opponentId in remaining)
-            {
-                if (opponentId == teamId)
-                    continue;
-
-                var team = _teamById[teamId];
-                var opponent = _teamById[opponentId];
-
-                if (CanPlay(teamId, opponentId))
-                    options.Add(new FixtureOption(team, opponent));
-
-                if (CanPlay(opponentId, teamId))
-                    options.Add(new FixtureOption(opponent, team));
-            }
-
-            return options;
-        }
-
-        private bool CanPlay(Guid homeId, Guid awayId)
-        {
-            if (homeId == awayId)
-                return false;
-
-            var homeCountry = _countryByTeamId[homeId];
-            var awayCountry = _countryByTeamId[awayId];
-
-            // Clubs from the same national association cannot meet.
-            if (string.Equals(
-                homeCountry,
-                awayCountry,
-                StringComparison.OrdinalIgnoreCase))
-                return false;
-
-            if (_opponents[homeId].Contains(awayId))
-                return false;
-
-            var awayPot = _potByTeamId[awayId];
-            var homePot = _potByTeamId[homeId];
-
-            // Each club must play exactly two opponents from each pot.
-            if (_potMatchCounts[homeId][awayPot] >= 2 ||
-                _potMatchCounts[awayId][homePot] >= 2)
-                return false;
-
-            // One home and one away opponent from each pot.
-            if (_homeByPot[homeId][awayPot] >= 1 ||
-                _awayByPot[awayId][homePot] >= 1)
-                return false;
-
-            // No more than two opponents from the same other country.
-            if (_countryCounts[homeId].GetValueOrDefault(awayCountry) >= 2 ||
-                _countryCounts[awayId].GetValueOrDefault(homeCountry) >= 2)
-                return false;
-
-            return true;
-        }
-
-        private void AddFixture(Match match)
-        {
-            var homeId = match.HomeTeamId;
-            var awayId = match.AwayTeamId;
-
-            var homeCountry = _countryByTeamId[homeId];
-            var awayCountry = _countryByTeamId[awayId];
-
-            var awayPot = _potByTeamId[awayId];
-            var homePot = _potByTeamId[homeId];
-
-            _opponents[homeId].Add(awayId);
-            _opponents[awayId].Add(homeId);
-
-            _potMatchCounts[homeId][awayPot]++;
-            _potMatchCounts[awayId][homePot]++;
-
-            _homeByPot[homeId][awayPot]++;
-            _awayByPot[awayId][homePot]++;
-
-            IncrementCountry(homeId, awayCountry);
-            IncrementCountry(awayId, homeCountry);
-
-            _fixtures.Add(match);
-        }
-
-        private void RemoveFixture(Match match)
-        {
-            var homeId = match.HomeTeamId;
-            var awayId = match.AwayTeamId;
-
-            var homeCountry = _countryByTeamId[homeId];
-            var awayCountry = _countryByTeamId[awayId];
-
-            var awayPot = _potByTeamId[awayId];
-            var homePot = _potByTeamId[homeId];
-
-            _opponents[homeId].Remove(awayId);
-            _opponents[awayId].Remove(homeId);
-
-            _potMatchCounts[homeId][awayPot]--;
-            _potMatchCounts[awayId][homePot]--;
-
-            _homeByPot[homeId][awayPot]--;
-            _awayByPot[awayId][homePot]--;
-
-            DecrementCountry(homeId, awayCountry);
-            DecrementCountry(awayId, homeCountry);
-
-            _fixtures.Remove(match);
-        }
-
-        private void IncrementCountry(Guid teamId, string country)
-        {
-            var counts = _countryCounts[teamId];
-            counts[country] = counts.GetValueOrDefault(country) + 1;
-        }
-
-        private void DecrementCountry(Guid teamId, string country)
-        {
-            var counts = _countryCounts[teamId];
-            var count = counts[country] - 1;
-
-            if (count == 0)
-                counts.Remove(country);
-            else
-                counts[country] = count;
-        }
-
-        private bool ValidateInternalState()
-        {
-            if (_fixtures.Count != 144)
-                return false;
-
-            foreach (var team in _teams)
-            {
-                if (_opponents[team.Id].Count != 8)
-                    return false;
-
-                for (var pot = 0; pot < PotCount; pot++)
-                {
-                    if (_potMatchCounts[team.Id][pot] != 2 ||
-                        _homeByPot[team.Id][pot] != 1 ||
-                        _awayByPot[team.Id][pot] != 1)
-                        return false;
-                }
-            }
-
-            return true;
-        }
-
-        private sealed record FixtureOption(Team Home, Team Away);
     }
 }
