@@ -39,6 +39,7 @@ builder.Services.AddScoped<TableService>();
 builder.Services.AddScoped<DrawService>();
 builder.Services.AddScoped<SimulationService>();
 builder.Services.AddScoped<CompetitionService>();
+builder.Services.AddScoped<KnockoutDrawService>();
 
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(connectionString));
