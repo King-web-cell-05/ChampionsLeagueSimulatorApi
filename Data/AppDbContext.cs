@@ -55,7 +55,6 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<Team>(entity =>
         {
-            // Store coefficients with three decimals.
             entity.Property(t => t.Coefficient)
                 .HasPrecision(7, 3);
         });
@@ -66,7 +65,6 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<User>(entity =>
         {
-            // Each user must have a unique email.
             entity.HasIndex(u => u.Email)
                 .IsUnique();
         });
@@ -78,8 +76,7 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<Match>(entity =>
         {
             entity.Property(m => m.KickoffUtc)
-                .HasColumnType(
-                    "timestamp with time zone");
+                .HasColumnType("timestamp with time zone");
 
             // Match -> Home Team
             entity.HasOne(m => m.HomeTeam)
@@ -106,7 +103,7 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<CompetitionTeam>(entity =>
         {
-            // Composite primary key.
+            // Composite primary key
             entity.HasKey(ct => new
             {
                 ct.CompetitionId,
@@ -153,7 +150,7 @@ public class AppDbContext : DbContext
         {
             entity.HasKey(t => t.Id);
 
-            // Prevent duplicate ties in the same round.
+            // Prevent duplicate ties within a round
             entity.HasIndex(t => new
             {
                 t.CompetitionId,
@@ -186,12 +183,11 @@ public class AppDbContext : DbContext
                 .HasForeignKey(t => t.WinnerTeamId)
                 .OnDelete(DeleteBehavior.Restrict);
 
-            // PostgreSQL UTC timestamp.
+            // PostgreSQL UTC timestamp
             entity.Property(t => t.CreatedAtUtc)
-                .HasColumnType(
-                    "timestamp with time zone");
+                .HasColumnType("timestamp with time zone");
 
-            // Completion status.
+            // Tie completion status
             entity.Property(t => t.IsCompleted)
                 .HasDefaultValue(false);
         });
@@ -204,7 +200,7 @@ public class AppDbContext : DbContext
         {
             entity.HasKey(m => m.Id);
 
-            // Prevent duplicate legs within a tie.
+            // Prevent duplicate legs within a tie
             entity.HasIndex(m => new
             {
                 m.KnockoutTieId,
@@ -230,14 +226,39 @@ public class AppDbContext : DbContext
                 .HasForeignKey(m => m.AwayTeamId)
                 .OnDelete(DeleteBehavior.Restrict);
 
-            // PostgreSQL UTC timestamp.
+            // PostgreSQL UTC timestamp
             entity.Property(m => m.KickoffUtc)
-                .HasColumnType(
-                    "timestamp with time zone");
+                .HasColumnType("timestamp with time zone");
 
-            // Match completion status.
+            // Match completion status
             entity.Property(m => m.IsPlayed)
                 .HasDefaultValue(false);
+
+            // ==================================
+            // EXTRA TIME CONFIGURATION
+            // ==================================
+
+            // Indicates whether extra time was played
+            entity.Property(m => m.WentToExtraTime)
+                .HasDefaultValue(false);
+
+            // Extra-time goals only (excluding 90-minute goals)
+            entity.Property(m => m.HomeExtraTimeScore);
+
+            entity.Property(m => m.AwayExtraTimeScore);
+
+            // ==================================
+            // PENALTY SHOOTOUT CONFIGURATION
+            // ==================================
+
+            // Indicates whether penalties were required
+            entity.Property(m => m.WentToPenalties)
+                .HasDefaultValue(false);
+
+            // Penalty shootout scores
+            entity.Property(m => m.HomePenaltyScore);
+
+            entity.Property(m => m.AwayPenaltyScore);
         });
     }
 }
