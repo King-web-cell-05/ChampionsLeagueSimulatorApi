@@ -69,11 +69,23 @@ namespace ChampionsLeagueSimulatorApi.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<int?>("AwayExtraTimeScore")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("AwayPenaltyScore")
+                        .HasColumnType("integer");
+
                     b.Property<int?>("AwayScore")
                         .HasColumnType("integer");
 
                     b.Property<Guid>("AwayTeamId")
                         .HasColumnType("uuid");
+
+                    b.Property<int?>("HomeExtraTimeScore")
+                        .HasColumnType("integer");
+
+                    b.Property<int?>("HomePenaltyScore")
+                        .HasColumnType("integer");
 
                     b.Property<int?>("HomeScore")
                         .HasColumnType("integer");
@@ -94,6 +106,16 @@ namespace ChampionsLeagueSimulatorApi.Migrations
 
                     b.Property<int>("Leg")
                         .HasColumnType("integer");
+
+                    b.Property<bool>("WentToExtraTime")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
+                    b.Property<bool>("WentToPenalties")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
 
                     b.HasKey("Id");
 
