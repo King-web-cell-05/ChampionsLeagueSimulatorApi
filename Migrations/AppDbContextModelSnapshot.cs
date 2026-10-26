@@ -63,6 +63,96 @@ namespace ChampionsLeagueSimulatorApi.Migrations
                     b.ToTable("CompetitionTeams");
                 });
 
+            modelBuilder.Entity("ChampionsLeagueSimulatorAPI.Entities.KnockoutMatch", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int?>("AwayScore")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("AwayTeamId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int?>("HomeScore")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("HomeTeamId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("IsPlayed")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
+                    b.Property<DateTime?>("KickoffUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("KnockoutTieId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Leg")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AwayTeamId");
+
+                    b.HasIndex("HomeTeamId");
+
+                    b.HasIndex("KnockoutTieId", "Leg")
+                        .IsUnique();
+
+                    b.ToTable("KnockoutMatches");
+                });
+
+            modelBuilder.Entity("ChampionsLeagueSimulatorAPI.Entities.KnockoutTie", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("AwayTeamId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CompetitionId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("HomeTeamId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("IsCompleted")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
+                    b.Property<int>("Round")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("TieNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid?>("WinnerTeamId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AwayTeamId");
+
+                    b.HasIndex("HomeTeamId");
+
+                    b.HasIndex("WinnerTeamId");
+
+                    b.HasIndex("CompetitionId", "Round", "TieNumber")
+                        .IsUnique();
+
+                    b.ToTable("KnockoutTies");
+                });
+
             modelBuilder.Entity("ChampionsLeagueSimulatorAPI.Entities.Match", b =>
                 {
                     b.Property<Guid>("Id")
@@ -219,6 +309,67 @@ namespace ChampionsLeagueSimulatorApi.Migrations
                     b.Navigation("Team");
                 });
 
+            modelBuilder.Entity("ChampionsLeagueSimulatorAPI.Entities.KnockoutMatch", b =>
+                {
+                    b.HasOne("ChampionsLeagueSimulatorAPI.Entities.Team", "AwayTeam")
+                        .WithMany()
+                        .HasForeignKey("AwayTeamId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("ChampionsLeagueSimulatorAPI.Entities.Team", "HomeTeam")
+                        .WithMany()
+                        .HasForeignKey("HomeTeamId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("ChampionsLeagueSimulatorAPI.Entities.KnockoutTie", "KnockoutTie")
+                        .WithMany("Matches")
+                        .HasForeignKey("KnockoutTieId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("AwayTeam");
+
+                    b.Navigation("HomeTeam");
+
+                    b.Navigation("KnockoutTie");
+                });
+
+            modelBuilder.Entity("ChampionsLeagueSimulatorAPI.Entities.KnockoutTie", b =>
+                {
+                    b.HasOne("ChampionsLeagueSimulatorAPI.Entities.Team", "AwayTeam")
+                        .WithMany()
+                        .HasForeignKey("AwayTeamId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("ChampionsLeagueSimulatorAPI.Entities.Competition", "Competition")
+                        .WithMany()
+                        .HasForeignKey("CompetitionId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("ChampionsLeagueSimulatorAPI.Entities.Team", "HomeTeam")
+                        .WithMany()
+                        .HasForeignKey("HomeTeamId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("ChampionsLeagueSimulatorAPI.Entities.Team", "WinnerTeam")
+                        .WithMany()
+                        .HasForeignKey("WinnerTeamId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("AwayTeam");
+
+                    b.Navigation("Competition");
+
+                    b.Navigation("HomeTeam");
+
+                    b.Navigation("WinnerTeam");
+                });
+
             modelBuilder.Entity("ChampionsLeagueSimulatorAPI.Entities.Match", b =>
                 {
                     b.HasOne("ChampionsLeagueSimulatorAPI.Entities.Team", "AwayTeam")
@@ -264,6 +415,11 @@ namespace ChampionsLeagueSimulatorApi.Migrations
                 });
 
             modelBuilder.Entity("ChampionsLeagueSimulatorAPI.Entities.Competition", b =>
+                {
+                    b.Navigation("Matches");
+                });
+
+            modelBuilder.Entity("ChampionsLeagueSimulatorAPI.Entities.KnockoutTie", b =>
                 {
                     b.Navigation("Matches");
                 });
