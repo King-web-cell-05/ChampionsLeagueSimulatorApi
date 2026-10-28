@@ -369,4 +369,104 @@ public class KnockoutController : ControllerBase
         }
     }
 
+    // ==========================================
+    // SIMULATE ROUND OF 16 FIRST LEGS
+    // ==========================================
+
+    [HttpPost(
+        "{competitionId:guid}/round-of-16/simulate-first-legs")]
+    public async Task<IActionResult> SimulateRoundOf16FirstLegs(
+        Guid competitionId)
+    {
+        try
+        {
+            var result = await _batchSimulationService
+                .SimulateRoundOf16LegsAsync(
+                    competitionId, 1);
+
+            return Ok(result);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { Message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { Message = ex.Message });
+        }
+    }
+
+    // ==========================================
+    // SIMULATE ROUND OF 16 SECOND LEGS
+    // ==========================================
+
+    [HttpPost(
+        "{competitionId:guid}/round-of-16/simulate-second-legs")]
+    public async Task<IActionResult> SimulateRoundOf16SecondLegs(
+        Guid competitionId)
+    {
+        try
+        {
+            var result = await _batchSimulationService
+                .SimulateRoundOf16LegsAsync(
+                    competitionId, 2);
+
+            return Ok(result);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { Message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { Message = ex.Message });
+        }
+    }
+
+    // ==========================================
+    // GET ROUND OF 16 QUALIFIED TEAMS
+    // ==========================================
+
+    [HttpGet("{competitionId:guid}/round-of-16/winners")]
+    public async Task<IActionResult> GetRoundOf16Winners(
+        Guid competitionId)
+    {
+        var ties = await _context.KnockoutTies
+            .AsNoTracking()
+            .Where(t =>
+                t.CompetitionId == competitionId &&
+                t.Round == KnockoutRound.RoundOf16)
+            .Include(t => t.WinnerTeam)
+            .OrderBy(t => t.TieNumber)
+            .ToListAsync();
+
+        var winners = ties
+            .Where(t =>
+                t.IsCompleted &&
+                t.WinnerTeamId.HasValue)
+            .Select(t => new
+            {
+                t.TieNumber,
+                TeamId = t.WinnerTeamId,
+                TeamName = t.WinnerTeam!.Name
+            })
+            .ToList();
+
+        return Ok(new
+        {
+            CompetitionId = competitionId,
+            Round = "RoundOf16",
+
+            TotalTies = ties.Count,
+            CompletedTies = ties.Count(t => t.IsCompleted),
+            QualifiedTeams = winners.Count,
+
+            IsRoundCompleted =
+                ties.Count == 8 &&
+                winners.Count == 8,
+
+            Winners = winners
+        });
+    }
+
 }
