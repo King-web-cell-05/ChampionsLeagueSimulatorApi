@@ -397,4 +397,121 @@ public class KnockoutDrawService
 
         return tie;
     }
+
+    public async Task<List<KnockoutTie>> GenerateQuarterFinalDrawAsync(
+        Guid competitionId)
+    {
+        if (competitionId == Guid.Empty)
+            throw new ArgumentException(
+                "Invalid competition ID.");
+
+        await using var transaction =
+            await _context.Database.BeginTransactionAsync(
+                System.Data.IsolationLevel.Serializable);
+
+        // 1. Verify competition exists.
+        bool competitionExists = await _context.Competitions
+            .AnyAsync(c => c.Id == competitionId);
+
+        if (!competitionExists)
+            throw new ArgumentException(
+                "Competition not found.");
+
+        // 2. Prevent duplicate quarter-final draws.
+        bool drawExists = await _context.KnockoutTies
+            .AnyAsync(t =>
+                t.CompetitionId == competitionId &&
+                t.Round == KnockoutRound.QuarterFinal);
+
+        if (drawExists)
+            throw new InvalidOperationException(
+                "Quarter-final draw has already been generated.");
+
+        // 3. Load all Round of 16 ties.
+        var roundOf16Ties = await _context.KnockoutTies
+            .AsNoTracking()
+            .Where(t =>
+                t.CompetitionId == competitionId &&
+                t.Round == KnockoutRound.RoundOf16)
+            .OrderBy(t => t.TieNumber)
+            .ToListAsync();
+
+        if (roundOf16Ties.Count != 8)
+            throw new InvalidOperationException(
+                "Exactly eight Round of 16 ties are required.");
+
+        // 4. Ensure every Round of 16 tie is complete.
+        if (roundOf16Ties.Any(t =>
+            !t.IsCompleted ||
+            !t.WinnerTeamId.HasValue))
+        {
+            throw new InvalidOperationException(
+                "Complete all Round of 16 matches " +
+                "before generating the quarter-finals.");
+        }
+
+        // 5. Validate tie numbering.
+        var expectedTieNumbers =
+            Enumerable.Range(1, 8).ToArray();
+
+        var actualTieNumbers = roundOf16Ties
+            .Select(t => t.TieNumber)
+            .ToArray();
+
+        if (!actualTieNumbers.SequenceEqual(expectedTieNumbers))
+            throw new InvalidOperationException(
+                "Invalid Round of 16 bracket numbering.");
+
+        // 6. Ensure eight unique qualified teams.
+        var winnerIds = roundOf16Ties
+            .Select(t => t.WinnerTeamId!.Value)
+            .ToList();
+
+        if (winnerIds.Distinct().Count() != 8)
+            throw new InvalidOperationException(
+                "Round of 16 winners must be unique.");
+
+        // 7. Generate fixed quarter-final bracket.
+        // R16 Tie 1 winner vs R16 Tie 2 winner
+        // R16 Tie 3 winner vs R16 Tie 4 winner
+        // R16 Tie 5 winner vs R16 Tie 6 winner
+        // R16 Tie 7 winner vs R16 Tie 8 winner
+
+        var quarterFinalTies = new List<KnockoutTie>();
+
+        for (int i = 0; i < 4; i++)
+        {
+            var firstWinner = winnerIds[i * 2];
+            var secondWinner = winnerIds[i * 2 + 1];
+
+            // Randomize home advantage once.
+            bool swap = Random.Shared.Next(2) == 0;
+
+            var firstTeamId = swap
+                ? secondWinner
+                : firstWinner;
+
+            var secondTeamId = swap
+                ? firstWinner
+                : secondWinner;
+
+            var tie = CreateTwoLeggedTie(
+                competitionId,
+                KnockoutRound.QuarterFinal,
+                i + 1,
+                firstTeamId,
+                secondTeamId);
+
+            quarterFinalTies.Add(tie);
+        }
+
+        // 8. Save all four ties and their eight matches.
+        _context.KnockoutTies.AddRange(quarterFinalTies);
+
+        await _context.SaveChangesAsync();
+        await transaction.CommitAsync();
+
+        return quarterFinalTies;
+    }
+
 }
