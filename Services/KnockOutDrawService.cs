@@ -1,76 +1,400 @@
 ﻿
+using System.Data;
+using ChampionsLeagueSimulatorAPI.Data;
+using ChampionsLeagueSimulatorAPI.Entities;
+using Microsoft.EntityFrameworkCore;
+
+namespace ChampionsLeagueSimulatorAPI.Services;
+
+public class KnockoutDrawService
+{
+    private readonly AppDbContext _context;
+    private readonly TableService _tableService;
+
+    public KnockoutDrawService(
+        AppDbContext context,
+        TableService tableService)
+    {
+        _context = context;
+        _tableService = tableService;
+    }
+
+    // ==========================================
+    // GENERATE PLAY-OFF DRAW
+    // ==========================================
+
+    public async Task<List<KnockoutTie>>
+        GeneratePlayoffDraw(Guid competitionId)
+    {
+        if (competitionId == Guid.Empty)
+            throw new ArgumentException(
+                "Invalid competition ID.");
+
+        await using var transaction =
+            await _context.Database.BeginTransactionAsync();
+
+        bool competitionExists =
+            await _context.Competitions
+                .AnyAsync(c => c.Id == competitionId);
+
+        if (!competitionExists)
+            throw new InvalidOperationException(
+                "Competition not found.");
+
+        bool drawExists = await _context.KnockoutTies
+            .AnyAsync(t =>
+                t.CompetitionId == competitionId &&
+                t.Round == KnockoutRound.Playoff);
+
+        if (drawExists)
+            throw new InvalidOperationException(
+                "Play-off draw already exists.");
+
+        var leagueMatches = await _context.Matches
+            .AsNoTracking()
+            .Where(m => m.CompetitionId == competitionId)
+            .Select(m => new
+            {
+                m.IsPlayed,
+                m.HomeScore,
+                m.AwayScore
+            })
+            .ToListAsync();
+
+        if (leagueMatches.Count != 144 ||
+            leagueMatches.Any(m =>
+                !m.IsPlayed ||
+                !m.HomeScore.HasValue ||
+                !m.AwayScore.HasValue))
+        {
+            throw new InvalidOperationException(
+                "The 36-team league phase must have " +
+                "144 completed matches before the draw.");
+        }
+
+        var standings =
+            await _tableService.GenerateTable(competitionId);
+
+        if (standings.Count != 36 ||
+            standings.Any(s => s.Played != 8))
+        {
+            throw new InvalidOperationException(
+                "Expected 36 clubs with 8 matches each.");
+        }
+
+        var brackets = new[]
+        {
+            (SeedStart: 9, OpponentStart: 23),
+            (SeedStart: 11, OpponentStart: 21),
+            (SeedStart: 13, OpponentStart: 19),
+            (SeedStart: 15, OpponentStart: 17)
+        };
+
+        var ties = new List<KnockoutTie>();
+        int tieNumber = 1;
+
+        foreach (var bracket in brackets)
+        {
+            var seeds = standings
+                .Where(s =>
+                    s.Position >= bracket.SeedStart &&
+                    s.Position <= bracket.SeedStart + 1)
+                .OrderBy(s => s.Position)
+                .ToList();
+
+            var opponents = standings
+                .Where(s =>
+                    s.Position >= bracket.OpponentStart &&
+                    s.Position <= bracket.OpponentStart + 1)
+                .OrderBy(s => s.Position)
+                .ToList();
+
+            if (seeds.Count != 2 || opponents.Count != 2)
+                throw new InvalidOperationException(
+                    "Invalid play-off seeding bracket.");
+
+            if (Random.Shared.Next(2) == 1)
+                opponents.Reverse();
+
+            for (int i = 0; i < 2; i++)
+            {
+                var seeded = seeds[i];
+                var unseeded = opponents[i];
+
+                var tie = CreateTwoLeggedTie(
+                    competitionId,
+                    KnockoutRound.Playoff,
+                    tieNumber++,
+                    seeded.TeamId,
+                    unseeded.TeamId);
+
+                ties.Add(tie);
+            }
+        }
+
+        _context.KnockoutTies.AddRange(ties);
+
+        await _context.SaveChangesAsync();
+        await transaction.CommitAsync();
+
+        return ties;
+    }
+
     // ==========================================
     // GENERATE ROUND OF 16 DRAW
     // ==========================================
 
-    [HttpPost("{competitionId:guid}/round-of-16/draw")]
-    public async Task<IActionResult> GenerateRoundOf16Draw(
-        Guid competitionId)
+    public async Task<List<KnockoutTie>>
+        GenerateRoundOf16DrawAsync(Guid competitionId)
     {
-        try
-        {
-            var ties = await _drawService
-                .GenerateRoundOf16DrawAsync(competitionId);
+        if (competitionId == Guid.Empty)
+            throw new ArgumentException(
+                "Invalid competition ID.");
 
-            // Query saved ties with their club names.
-            var savedTies = await _context.KnockoutTies
-                .AsNoTracking()
+        await using var transaction =
+            await _context.Database.BeginTransactionAsync(
+                IsolationLevel.Serializable);
+
+        bool competitionExists =
+            await _context.Competitions
+                .AnyAsync(c => c.Id == competitionId);
+
+        if (!competitionExists)
+            throw new InvalidOperationException(
+                "Competition not found.");
+
+        // Prevent duplicate Round of 16 draws.
+        bool drawExists = await _context.KnockoutTies
+            .AnyAsync(t =>
+                t.CompetitionId == competitionId &&
+                t.Round == KnockoutRound.RoundOf16);
+
+        if (drawExists)
+            throw new InvalidOperationException(
+                "Round of 16 draw already exists.");
+
+        // Load completed play-off ties.
+        var playoffTies = await _context.KnockoutTies
+            .AsNoTracking()
+            .Where(t =>
+                t.CompetitionId == competitionId &&
+                t.Round == KnockoutRound.Playoff)
+            .OrderBy(t => t.TieNumber)
+            .ToListAsync();
+
+        if (playoffTies.Count != 8 ||
+            playoffTies.Any(t =>
+                !t.IsCompleted ||
+                !t.WinnerTeamId.HasValue))
+        {
+            throw new InvalidOperationException(
+                "All eight play-off ties must be " +
+                "completed before the Round of 16 draw.");
+        }
+
+        var playoffWinnerIds = playoffTies
+            .Select(t => t.WinnerTeamId!.Value)
+            .ToList();
+
+        if (playoffWinnerIds.Distinct().Count() != 8)
+            throw new InvalidOperationException(
+                "Play-off winners must be eight unique teams.");
+
+        // Retrieve the final league standings.
+        var standings =
+            await _tableService.GenerateTable(competitionId);
+
+        if (standings.Count != 36 ||
+            standings.Any(s => s.Played != 8) ||
+            standings.Select(s => s.Position).Distinct().Count() != 36 ||
+            standings.Select(s => s.TeamId).Distinct().Count() != 36)
+        {
+            throw new InvalidOperationException(
+                "Invalid final league-phase standings.");
+        }
+
+        // Top eight qualify directly.
+        var directQualifiers = standings
+            .Where(s => s.Position >= 1 && s.Position <= 8)
+            .OrderBy(s => s.Position)
+            .ToList();
+
+        if (directQualifiers.Count != 8)
+            throw new InvalidOperationException(
+                "Expected eight direct qualifiers.");
+
+        var directIds = directQualifiers
+            .Select(s => s.TeamId)
+            .ToHashSet();
+
+        if (playoffWinnerIds.Any(directIds.Contains))
+            throw new InvalidOperationException(
+                "A team cannot qualify both directly " +
+                "and through the play-offs.");
+
+        // Validate that every play-off winner originally
+        // finished between positions 9 and 24.
+        var standingsByTeam = standings
+            .ToDictionary(s => s.TeamId);
+
+        foreach (var winnerId in playoffWinnerIds)
+        {
+            if (!standingsByTeam.TryGetValue(
+                    winnerId, out var standing) ||
+                standing.Position < 9 ||
+                standing.Position > 24)
+            {
+                throw new InvalidOperationException(
+                    "A play-off winner has an invalid " +
+                    "league-phase position.");
+            }
+        }
+
+        // UEFA-inspired bracket structure:
+        //
+        // Direct seeds 1-2 face winners from
+        // play-off bracket 15-16 vs 17-18.
+        //
+        // Direct seeds 3-4 face winners from
+        // play-off bracket 13-14 vs 19-20.
+        //
+        // Direct seeds 5-6 face winners from
+        // play-off bracket 11-12 vs 21-22.
+        //
+        // Direct seeds 7-8 face winners from
+        // play-off bracket 9-10 vs 23-24.
+        //
+        // The play-off draw created two ties
+        // for each of those four brackets.
+
+        var roundOf16Brackets = new[]
+        {
+            (SeedStart: 1, PlayoffTieStart: 7),
+            (SeedStart: 3, PlayoffTieStart: 5),
+            (SeedStart: 5, PlayoffTieStart: 3),
+            (SeedStart: 7, PlayoffTieStart: 1)
+        };
+
+        var roundOf16Ties = new List<KnockoutTie>();
+        int tieNumber = 1;
+
+        foreach (var bracket in roundOf16Brackets)
+        {
+            var seeds = directQualifiers
+                .Where(s =>
+                    s.Position >= bracket.SeedStart &&
+                    s.Position <= bracket.SeedStart + 1)
+                .OrderBy(s => s.Position)
+                .ToList();
+
+            var eligiblePlayoffTies = playoffTies
                 .Where(t =>
-                    t.CompetitionId == competitionId &&
-                    t.Round == KnockoutRound.RoundOf16)
-                .Include(t => t.HomeTeam)
-                .Include(t => t.AwayTeam)
-                .Include(t => t.Matches)
-                    .ThenInclude(m => m.HomeTeam)
-                .Include(t => t.Matches)
-                    .ThenInclude(m => m.AwayTeam)
+                    t.TieNumber >= bracket.PlayoffTieStart &&
+                    t.TieNumber <= bracket.PlayoffTieStart + 1)
                 .OrderBy(t => t.TieNumber)
-                .ToListAsync();
+                .ToList();
 
-            return Ok(new
+            if (seeds.Count != 2 ||
+                eligiblePlayoffTies.Count != 2)
             {
-                Message = "Round of 16 draw generated successfully.",
-                CompetitionId = competitionId,
-                Round = "RoundOf16",
-                TotalTies = ties.Count,
-                TotalMatches = savedTies.Sum(t => t.Matches.Count),
+                throw new InvalidOperationException(
+                    "Invalid Round of 16 pairing bracket.");
+            }
 
-                Ties = savedTies.Select(t => new
+            var opponents = eligiblePlayoffTies
+                .Select(t => t.WinnerTeamId!.Value)
+                .ToList();
+
+            // Randomly assign the two eligible winners
+            // to the two direct qualifiers.
+            if (Random.Shared.Next(2) == 1)
+                opponents.Reverse();
+
+            for (int i = 0; i < 2; i++)
+            {
+                var seededTeamId = seeds[i].TeamId;
+                var opponentTeamId = opponents[i];
+
+                var tie = CreateTwoLeggedTie(
+                    competitionId,
+                    KnockoutRound.RoundOf16,
+                    tieNumber++,
+                    seededTeamId,
+                    opponentTeamId);
+
+                roundOf16Ties.Add(tie);
+            }
+        }
+
+        if (roundOf16Ties.Count != 8 ||
+            roundOf16Ties
+                .SelectMany(t => new[]
                 {
-                    t.Id,
-                    t.TieNumber,
-
-                    SeededTeamId = t.HomeTeamId,
-                    SeededTeam = t.HomeTeam.Name,
-
-                    OpponentTeamId = t.AwayTeamId,
-                    OpponentTeam = t.AwayTeam.Name,
-
-                    Matches = t.Matches
-                        .OrderBy(m => m.Leg)
-                        .Select(m => new
-                        {
-                            m.Id,
-                            m.Leg,
-                            HomeTeam = m.HomeTeam.Name,
-                            AwayTeam = m.AwayTeam.Name,
-                            m.IsPlayed
-                        })
+                    t.HomeTeamId,
+                    t.AwayTeamId
                 })
-            });
-        }
-        catch (ArgumentException ex)
+                .Distinct()
+                .Count() != 16)
         {
-            return BadRequest(new
-            {
-                Message = ex.Message
-            });
+            throw new InvalidOperationException(
+                "Round of 16 must contain " +
+                "eight ties and 16 unique clubs.");
         }
-        catch (InvalidOperationException ex)
-        {
-            return Conflict(new
-            {
-                Message = ex.Message
-            });
-        }
+
+        _context.KnockoutTies.AddRange(roundOf16Ties);
+
+        await _context.SaveChangesAsync();
+        await transaction.CommitAsync();
+
+        return roundOf16Ties;
     }
+
+    // ==========================================
+    // SHARED TWO-LEGGED FIXTURE GENERATOR
+    // ==========================================
+
+    private static KnockoutTie CreateTwoLeggedTie(
+        Guid competitionId,
+        KnockoutRound round,
+        int tieNumber,
+        Guid seededTeamId,
+        Guid unseededTeamId)
+    {
+        var tie = new KnockoutTie
+        {
+            Id = Guid.NewGuid(),
+            CompetitionId = competitionId,
+            Round = round,
+            TieNumber = tieNumber,
+
+            // Seeded team hosts the second leg.
+            HomeTeamId = seededTeamId,
+            AwayTeamId = unseededTeamId,
+
+            IsCompleted = false,
+            CreatedAtUtc = DateTime.UtcNow
+        };
+
+        // First leg: unseeded team hosts.
+        tie.Matches.Add(new KnockoutMatch
+        {
+            Id = Guid.NewGuid(),
+            Leg = 1,
+            HomeTeamId = unseededTeamId,
+            AwayTeamId = seededTeamId,
+            IsPlayed = false
+        });
+
+        // Second leg: seeded team hosts.
+        tie.Matches.Add(new KnockoutMatch
+        {
+            Id = Guid.NewGuid(),
+            Leg = 2,
+            HomeTeamId = seededTeamId,
+            AwayTeamId = unseededTeamId,
+            IsPlayed = false
+        });
+
+        return tie;
+    }
+}
