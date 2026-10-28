@@ -514,4 +514,114 @@ public class KnockoutDrawService
         return quarterFinalTies;
     }
 
+
+    public async Task<List<KnockoutTie>> GenerateSemiFinalDrawAsync(
+        Guid competitionId)
+    {
+        if (competitionId == Guid.Empty)
+            throw new ArgumentException(
+                "Invalid competition ID.");
+
+        await using var transaction =
+            await _context.Database.BeginTransactionAsync(
+                System.Data.IsolationLevel.Serializable);
+
+        // Verify the competition exists.
+        bool competitionExists = await _context.Competitions
+            .AnyAsync(c => c.Id == competitionId);
+
+        if (!competitionExists)
+            throw new ArgumentException(
+                "Competition not found.");
+
+        // Prevent duplicate semi-final draws.
+        bool semiFinalExists = await _context.KnockoutTies
+            .AnyAsync(t =>
+                t.CompetitionId == competitionId &&
+                t.Round == KnockoutRound.SemiFinal);
+
+        if (semiFinalExists)
+            throw new InvalidOperationException(
+                "Semi-final draw has already been generated.");
+
+        // Retrieve completed quarter-final ties.
+        var quarterFinalTies = await _context.KnockoutTies
+            .AsNoTracking()
+            .Where(t =>
+                t.CompetitionId == competitionId &&
+                t.Round == KnockoutRound.QuarterFinal)
+            .Include(t => t.Matches)
+            .OrderBy(t => t.TieNumber)
+            .ToListAsync();
+
+        if (quarterFinalTies.Count != 4)
+            throw new InvalidOperationException(
+                "Exactly four quarter-final ties are required.");
+
+        // Validate bracket numbering.
+        var expectedNumbers = Enumerable.Range(1, 4);
+
+        if (!quarterFinalTies
+            .Select(t => t.TieNumber)
+            .SequenceEqual(expectedNumbers))
+        {
+            throw new InvalidOperationException(
+                "Invalid quarter-final bracket numbering.");
+        }
+
+        // All quarter-finals must be completed.
+        if (quarterFinalTies.Any(t =>
+            !t.IsCompleted ||
+            !t.WinnerTeamId.HasValue ||
+            t.Matches.Count != 2 ||
+            t.Matches.Any(m => !m.IsPlayed)))
+        {
+            throw new InvalidOperationException(
+                "Complete all quarter-final matches first.");
+        }
+
+        var winnerIds = quarterFinalTies
+            .Select(t => t.WinnerTeamId!.Value)
+            .ToList();
+
+        if (winnerIds.Distinct().Count() != 4)
+            throw new InvalidOperationException(
+                "Quarter-final winners must be unique.");
+
+        // Fixed bracket:
+        // SF1 = QF1 winner vs QF2 winner
+        // SF2 = QF3 winner vs QF4 winner
+
+        var semiFinalTies = new List<KnockoutTie>();
+
+        for (int i = 0; i < 2; i++)
+        {
+            Guid team1 = winnerIds[i * 2];
+            Guid team2 = winnerIds[i * 2 + 1];
+
+            // Randomize which team hosts the second leg.
+            bool swap = Random.Shared.Next(2) == 0;
+
+            Guid secondLegHomeTeam = swap ? team2 : team1;
+            Guid firstLegHomeTeam = swap ? team1 : team2;
+
+            var tie = CreateTwoLeggedTie(
+                competitionId,
+                KnockoutRound.SemiFinal,
+                i + 1,
+                secondLegHomeTeam,
+                firstLegHomeTeam);
+
+            semiFinalTies.Add(tie);
+        }
+
+        // Save both semi-final ties and four matches.
+        _context.KnockoutTies.AddRange(semiFinalTies);
+
+        await _context.SaveChangesAsync();
+        await transaction.CommitAsync();
+
+        return semiFinalTies;
+    }
+
 }

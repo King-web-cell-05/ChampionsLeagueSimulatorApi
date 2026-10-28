@@ -305,7 +305,92 @@ public class KnockoutController : ControllerBase
     }
 
     // ==========================================
-    // SIMULATE SINGLE KNOCKOUT MATCH
+    // SEMI-FINAL DRAW
+    // ==========================================
+
+    [HttpPost("{competitionId:guid}/semi-finals/draw")]
+    public async Task<IActionResult> GenerateSemiFinalDraw(
+        Guid competitionId)
+    {
+        try
+        {
+            await _drawService
+                .GenerateSemiFinalDrawAsync(competitionId);
+
+            return await GetDrawResponseAsync(
+                competitionId,
+                KnockoutRound.SemiFinal,
+                "Semi-final draw generated successfully.");
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { Message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { Message = ex.Message });
+        }
+    }
+
+    // ==========================================
+    // SEMI-FINAL FIXTURES
+    // ==========================================
+
+    [HttpGet("{competitionId:guid}/semi-finals")]
+    public Task<IActionResult> GetSemiFinals(
+        Guid competitionId)
+    {
+        return GetRoundFixturesAsync(
+            competitionId,
+            KnockoutRound.SemiFinal);
+    }
+
+    // ==========================================
+    // SEMI-FINAL FIRST LEGS
+    // ==========================================
+
+    [HttpPost(
+        "{competitionId:guid}/semi-finals/simulate-first-legs")]
+    public Task<IActionResult> SimulateSemiFinalFirstLegs(
+        Guid competitionId)
+    {
+        return SimulateRoundLegsResponseAsync(
+            competitionId,
+            KnockoutRound.SemiFinal,
+            1);
+    }
+
+    // ==========================================
+    // SEMI-FINAL SECOND LEGS
+    // ==========================================
+
+    [HttpPost(
+        "{competitionId:guid}/semi-finals/simulate-second-legs")]
+    public Task<IActionResult> SimulateSemiFinalSecondLegs(
+        Guid competitionId)
+    {
+        return SimulateRoundLegsResponseAsync(
+            competitionId,
+            KnockoutRound.SemiFinal,
+            2);
+    }
+
+    // ==========================================
+    // SEMI-FINAL WINNERS
+    // ==========================================
+
+    [HttpGet("{competitionId:guid}/semi-finals/winners")]
+    public Task<IActionResult> GetSemiFinalWinners(
+        Guid competitionId)
+    {
+        return GetRoundWinnersAsync(
+            competitionId,
+            KnockoutRound.SemiFinal,
+            2);
+    }
+
+    // ==========================================
+    // SIMULATE A SINGLE KNOCKOUT MATCH
     // ==========================================
 
     [HttpPost("matches/{matchId:guid}/simulate")]
@@ -367,8 +452,10 @@ public class KnockoutController : ControllerBase
             {
                 t.Id,
                 t.TieNumber,
+
                 Team1Id = t.HomeTeamId,
                 Team1 = t.HomeTeam.Name,
+
                 Team2Id = t.AwayTeamId,
                 Team2 = t.AwayTeam.Name,
 
@@ -378,10 +465,13 @@ public class KnockoutController : ControllerBase
                     {
                         m.Id,
                         m.Leg,
+
                         m.HomeTeamId,
                         HomeTeam = m.HomeTeam.Name,
+
                         m.AwayTeamId,
                         AwayTeam = m.AwayTeam.Name,
+
                         m.IsPlayed
                     })
             })
