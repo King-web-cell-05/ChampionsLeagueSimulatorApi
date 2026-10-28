@@ -624,4 +624,118 @@ public class KnockoutDrawService
         return semiFinalTies;
     }
 
+    public async Task<KnockoutTie> GenerateFinalAsync(
+        Guid competitionId)
+    {
+        if (competitionId == Guid.Empty)
+        {
+            throw new ArgumentException(
+                "Invalid competition ID.");
+        }
+
+        await using var transaction =
+            await _context.Database.BeginTransactionAsync(
+                System.Data.IsolationLevel.Serializable);
+
+        // Check that the competition exists.
+        bool competitionExists = await _context.Competitions
+            .AnyAsync(c => c.Id == competitionId);
+
+        if (!competitionExists)
+        {
+            throw new ArgumentException(
+                "Competition not found.");
+        }
+
+        // Prevent duplicate final generation.
+        bool finalExists = await _context.KnockoutTies
+            .AnyAsync(t =>
+                t.CompetitionId == competitionId &&
+                t.Round == KnockoutRound.Final);
+
+        if (finalExists)
+        {
+            throw new InvalidOperationException(
+                "The championship final already exists.");
+        }
+
+        // Retrieve the two semi-final ties.
+        var semiFinalTies = await _context.KnockoutTies
+            .AsNoTracking()
+            .Where(t =>
+                t.CompetitionId == competitionId &&
+                t.Round == KnockoutRound.SemiFinal)
+            .Include(t => t.Matches)
+            .OrderBy(t => t.TieNumber)
+            .ToListAsync();
+
+        if (semiFinalTies.Count != 2)
+        {
+            throw new InvalidOperationException(
+                "Exactly two semi-final ties are required.");
+        }
+
+        // Verify that both semi-finals are completed.
+        if (semiFinalTies.Any(t =>
+            !t.IsCompleted ||
+            !t.WinnerTeamId.HasValue ||
+            t.Matches.Count != 2 ||
+            t.Matches.Any(m => !m.IsPlayed)))
+        {
+            throw new InvalidOperationException(
+                "Complete both semi-finals before generating the final.");
+        }
+
+        if (semiFinalTies[0].TieNumber != 1 ||
+            semiFinalTies[1].TieNumber != 2)
+        {
+            throw new InvalidOperationException(
+                "Invalid semi-final bracket numbering.");
+        }
+
+        Guid finalist1 = semiFinalTies[0].WinnerTeamId!.Value;
+        Guid finalist2 = semiFinalTies[1].WinnerTeamId!.Value;
+
+        if (finalist1 == finalist2)
+        {
+            throw new InvalidOperationException(
+                "The two finalists must be different teams.");
+        }
+
+        // A final is one neutral-venue match.
+        // Home and away are administrative designations.
+        var finalTie = new KnockoutTie
+        {
+            Id = Guid.NewGuid(),
+            CompetitionId = competitionId,
+            Round = KnockoutRound.Final,
+            TieNumber = 1,
+            HomeTeamId = finalist1,
+            AwayTeamId = finalist2,
+            IsCompleted = false,
+            CreatedAtUtc = DateTime.UtcNow
+        };
+
+        var finalMatch = new KnockoutMatch
+        {
+            Id = Guid.NewGuid(),
+            KnockoutTieId = finalTie.Id,
+            KnockoutTie = finalTie,
+            Leg = 1,
+            HomeTeamId = finalist1,
+            AwayTeamId = finalist2,
+            IsPlayed = false
+        };
+
+        finalTie.Matches.Add(finalMatch);
+
+        _context.KnockoutTies.Add(finalTie);
+
+        await _context.SaveChangesAsync();
+        await transaction.CommitAsync();
+
+        return finalTie;
+    }
+
+
 }

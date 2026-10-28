@@ -390,11 +390,52 @@ public class KnockoutController : ControllerBase
     }
 
     // ==========================================
+    // CHAMPIONSHIP FINAL DRAW
+    // ==========================================
+
+    [HttpPost("{competitionId:guid}/final/draw")]
+    public async Task<IActionResult> GenerateFinalDraw(
+        Guid competitionId)
+    {
+        try
+        {
+            await _drawService.GenerateFinalAsync(competitionId);
+
+            return await GetDrawResponseAsync(
+                competitionId,
+                KnockoutRound.Final,
+                "Championship final generated successfully.");
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { Message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { Message = ex.Message });
+        }
+    }
+
+    // ==========================================
+    // CHAMPIONSHIP FINAL FIXTURE
+    // ==========================================
+
+    [HttpGet("{competitionId:guid}/final")]
+    public Task<IActionResult> GetFinal(
+        Guid competitionId)
+    {
+        return GetRoundFixturesAsync(
+            competitionId,
+            KnockoutRound.Final);
+    }
+
+    // ==========================================
     // SIMULATE A SINGLE KNOCKOUT MATCH
     // ==========================================
 
     [HttpPost("matches/{matchId:guid}/simulate")]
-    public async Task<IActionResult> SimulateMatch(Guid matchId)
+    public async Task<IActionResult> SimulateMatch(
+        Guid matchId)
     {
         try
         {
