@@ -7,10 +7,9 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
-using Microsoft.OpenApi.Models;
+using Microsoft.OpenApi;
 
 using System.Security.Claims;
-using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -62,7 +61,10 @@ builder.Services.AddScoped<DrawService>();
 builder.Services.AddScoped<SimulationService>();
 builder.Services.AddScoped<CompetitionService>();
 
-// Knockout services
+// ==========================================
+// KNOCKOUT SERVICES
+// ==========================================
+
 builder.Services.AddScoped<KnockoutDrawService>();
 builder.Services.AddScoped<KnockoutSimulationService>();
 builder.Services.AddScoped<KnockoutBatchSimulationService>();
@@ -142,23 +144,27 @@ builder.Services.AddEndpointsApiExplorer();
 
 builder.Services.AddSwaggerGen(options =>
 {
-    // --------------------------------------
-    // API DOCUMENTATION
-    // --------------------------------------
+    // ======================================
+    // API INFORMATION
+    // ======================================
 
     options.SwaggerDoc("v1", new OpenApiInfo
     {
         Title = "FootballSim API",
+
         Version = "v1",
 
         Description =
-            "FootballSim - Champions League " +
-            "Simulation and Competition Management API"
+            "FootballSim - UEFA Champions League " +
+            "Simulation and Competition Management API. " +
+            "Supports teams, competitions, league-phase " +
+            "fixtures, standings, knockout rounds, " +
+            "match simulation, and championship results."
     });
 
-    // --------------------------------------
+    // ======================================
     // JWT BEARER SECURITY DEFINITION
-    // --------------------------------------
+    // ======================================
 
     options.AddSecurityDefinition(
         JwtBearerDefaults.AuthenticationScheme,
@@ -175,30 +181,27 @@ builder.Services.AddSwaggerGen(options =>
             In = ParameterLocation.Header,
 
             Description =
-                "Enter your JWT access token to " +
-                "authenticate protected API endpoints."
+                "Enter your JWT access token. " +
+                "Swagger will automatically add " +
+                "the Bearer prefix to requests."
         });
 
-    // --------------------------------------
-    // APPLY JWT SECURITY REQUIREMENT
-    // --------------------------------------
+    // ======================================
+    // JWT SECURITY REQUIREMENT
+    // Compatible with Swashbuckle 10.1.3
+    // and Microsoft.OpenApi 2.7.5
+    // ======================================
 
-    options.AddSecurityRequirement(
+    options.AddSecurityRequirement(document =>
         new OpenApiSecurityRequirement
         {
             {
-                new OpenApiSecurityScheme
-                {
-                    Reference = new OpenApiReference
-                    {
-                        Type = ReferenceType.SecurityScheme,
+                new OpenApiSecuritySchemeReference(
+                    JwtBearerDefaults.AuthenticationScheme,
+                    document
+                ),
 
-                        Id = JwtBearerDefaults
-                            .AuthenticationScheme
-                    }
-                },
-
-                Array.Empty<string>()
+                new List<string>()
             }
         });
 });
@@ -221,16 +224,29 @@ app.UseSwaggerUI(options =>
         "/swagger/v1/swagger.json",
         "FootballSim API v1");
 
-    options.DocumentTitle = "FootballSim API Documentation";
+    options.DocumentTitle =
+        "FootballSim API Documentation";
+
+    options.DisplayRequestDuration();
+
+    options.EnableDeepLinking();
 });
 
 // ==========================================
-// HTTP MIDDLEWARE
+// HTTPS REDIRECTION
 // ==========================================
 
 app.UseHttpsRedirection();
 
+// ==========================================
+// CORS
+// ==========================================
+
 app.UseCors("Frontend");
+
+// ==========================================
+// AUTHENTICATION & AUTHORIZATION
+// ==========================================
 
 app.UseAuthentication();
 
