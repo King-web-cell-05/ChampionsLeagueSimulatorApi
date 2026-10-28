@@ -29,7 +29,7 @@ public class KnockoutController : ControllerBase
     }
 
     // ==========================================
-    // PLAY-OFF DRAW
+    // KNOCKOUT PLAY-OFFS
     // ==========================================
 
     [HttpPost("{competitionId:guid}/playoffs/draw")]
@@ -78,24 +78,16 @@ public class KnockoutController : ControllerBase
         }
     }
 
-    // ==========================================
-    // PLAY-OFF FIXTURES
-    // ==========================================
-
     [HttpGet("{competitionId:guid}/playoffs")]
-    public Task<IActionResult> GetPlayoffs(Guid competitionId)
+    public Task<IActionResult> GetPlayoffs(
+        Guid competitionId)
     {
         return GetRoundFixturesAsync(
             competitionId,
             KnockoutRound.Playoff);
     }
 
-    // ==========================================
-    // PLAY-OFF FIRST LEGS
-    // ==========================================
-
-    [HttpPost(
-        "{competitionId:guid}/playoffs/simulate-first-legs")]
+    [HttpPost("{competitionId:guid}/playoffs/simulate-first-legs")]
     public Task<IActionResult> SimulatePlayoffFirstLegs(
         Guid competitionId)
     {
@@ -105,12 +97,7 @@ public class KnockoutController : ControllerBase
             1);
     }
 
-    // ==========================================
-    // PLAY-OFF SECOND LEGS
-    // ==========================================
-
-    [HttpPost(
-        "{competitionId:guid}/playoffs/simulate-second-legs")]
+    [HttpPost("{competitionId:guid}/playoffs/simulate-second-legs")]
     public Task<IActionResult> SimulatePlayoffSecondLegs(
         Guid competitionId)
     {
@@ -119,10 +106,6 @@ public class KnockoutController : ControllerBase
             KnockoutRound.Playoff,
             2);
     }
-
-    // ==========================================
-    // PLAY-OFF WINNERS
-    // ==========================================
 
     [HttpGet("{competitionId:guid}/playoffs/winners")]
     public Task<IActionResult> GetPlayoffWinners(
@@ -135,7 +118,7 @@ public class KnockoutController : ControllerBase
     }
 
     // ==========================================
-    // ROUND OF 16 DRAW
+    // ROUND OF 16
     // ==========================================
 
     [HttpPost("{competitionId:guid}/round-of-16/draw")]
@@ -162,10 +145,6 @@ public class KnockoutController : ControllerBase
         }
     }
 
-    // ==========================================
-    // ROUND OF 16 FIXTURES
-    // ==========================================
-
     [HttpGet("{competitionId:guid}/round-of-16")]
     public Task<IActionResult> GetRoundOf16(
         Guid competitionId)
@@ -175,12 +154,7 @@ public class KnockoutController : ControllerBase
             KnockoutRound.RoundOf16);
     }
 
-    // ==========================================
-    // ROUND OF 16 FIRST LEGS
-    // ==========================================
-
-    [HttpPost(
-        "{competitionId:guid}/round-of-16/simulate-first-legs")]
+    [HttpPost("{competitionId:guid}/round-of-16/simulate-first-legs")]
     public Task<IActionResult> SimulateRoundOf16FirstLegs(
         Guid competitionId)
     {
@@ -190,12 +164,7 @@ public class KnockoutController : ControllerBase
             1);
     }
 
-    // ==========================================
-    // ROUND OF 16 SECOND LEGS
-    // ==========================================
-
-    [HttpPost(
-        "{competitionId:guid}/round-of-16/simulate-second-legs")]
+    [HttpPost("{competitionId:guid}/round-of-16/simulate-second-legs")]
     public Task<IActionResult> SimulateRoundOf16SecondLegs(
         Guid competitionId)
     {
@@ -204,10 +173,6 @@ public class KnockoutController : ControllerBase
             KnockoutRound.RoundOf16,
             2);
     }
-
-    // ==========================================
-    // ROUND OF 16 WINNERS
-    // ==========================================
 
     [HttpGet("{competitionId:guid}/round-of-16/winners")]
     public Task<IActionResult> GetRoundOf16Winners(
@@ -220,7 +185,7 @@ public class KnockoutController : ControllerBase
     }
 
     // ==========================================
-    // QUARTER-FINAL DRAW
+    // QUARTER-FINALS
     // ==========================================
 
     [HttpPost("{competitionId:guid}/quarter-finals/draw")]
@@ -247,10 +212,6 @@ public class KnockoutController : ControllerBase
         }
     }
 
-    // ==========================================
-    // QUARTER-FINAL FIXTURES
-    // ==========================================
-
     [HttpGet("{competitionId:guid}/quarter-finals")]
     public Task<IActionResult> GetQuarterFinals(
         Guid competitionId)
@@ -260,12 +221,7 @@ public class KnockoutController : ControllerBase
             KnockoutRound.QuarterFinal);
     }
 
-    // ==========================================
-    // QUARTER-FINAL FIRST LEGS
-    // ==========================================
-
-    [HttpPost(
-        "{competitionId:guid}/quarter-finals/simulate-first-legs")]
+    [HttpPost("{competitionId:guid}/quarter-finals/simulate-first-legs")]
     public Task<IActionResult> SimulateQuarterFinalFirstLegs(
         Guid competitionId)
     {
@@ -275,12 +231,7 @@ public class KnockoutController : ControllerBase
             1);
     }
 
-    // ==========================================
-    // QUARTER-FINAL SECOND LEGS
-    // ==========================================
-
-    [HttpPost(
-        "{competitionId:guid}/quarter-finals/simulate-second-legs")]
+    [HttpPost("{competitionId:guid}/quarter-finals/simulate-second-legs")]
     public Task<IActionResult> SimulateQuarterFinalSecondLegs(
         Guid competitionId)
     {
@@ -289,10 +240,6 @@ public class KnockoutController : ControllerBase
             KnockoutRound.QuarterFinal,
             2);
     }
-
-    // ==========================================
-    // QUARTER-FINAL WINNERS
-    // ==========================================
 
     [HttpGet("{competitionId:guid}/quarter-finals/winners")]
     public Task<IActionResult> GetQuarterFinalWinners(
@@ -305,7 +252,7 @@ public class KnockoutController : ControllerBase
     }
 
     // ==========================================
-    // SEMI-FINAL DRAW
+    // SEMI-FINALS
     // ==========================================
 
     [HttpPost("{competitionId:guid}/semi-finals/draw")]
@@ -332,10 +279,6 @@ public class KnockoutController : ControllerBase
         }
     }
 
-    // ==========================================
-    // SEMI-FINAL FIXTURES
-    // ==========================================
-
     [HttpGet("{competitionId:guid}/semi-finals")]
     public Task<IActionResult> GetSemiFinals(
         Guid competitionId)
@@ -345,12 +288,7 @@ public class KnockoutController : ControllerBase
             KnockoutRound.SemiFinal);
     }
 
-    // ==========================================
-    // SEMI-FINAL FIRST LEGS
-    // ==========================================
-
-    [HttpPost(
-        "{competitionId:guid}/semi-finals/simulate-first-legs")]
+    [HttpPost("{competitionId:guid}/semi-finals/simulate-first-legs")]
     public Task<IActionResult> SimulateSemiFinalFirstLegs(
         Guid competitionId)
     {
@@ -360,12 +298,7 @@ public class KnockoutController : ControllerBase
             1);
     }
 
-    // ==========================================
-    // SEMI-FINAL SECOND LEGS
-    // ==========================================
-
-    [HttpPost(
-        "{competitionId:guid}/semi-finals/simulate-second-legs")]
+    [HttpPost("{competitionId:guid}/semi-finals/simulate-second-legs")]
     public Task<IActionResult> SimulateSemiFinalSecondLegs(
         Guid competitionId)
     {
@@ -374,10 +307,6 @@ public class KnockoutController : ControllerBase
             KnockoutRound.SemiFinal,
             2);
     }
-
-    // ==========================================
-    // SEMI-FINAL WINNERS
-    // ==========================================
 
     [HttpGet("{competitionId:guid}/semi-finals/winners")]
     public Task<IActionResult> GetSemiFinalWinners(
@@ -390,7 +319,7 @@ public class KnockoutController : ControllerBase
     }
 
     // ==========================================
-    // CHAMPIONSHIP FINAL DRAW
+    // CHAMPIONSHIP FINAL
     // ==========================================
 
     [HttpPost("{competitionId:guid}/final/draw")]
@@ -399,7 +328,8 @@ public class KnockoutController : ControllerBase
     {
         try
         {
-            await _drawService.GenerateFinalAsync(competitionId);
+            await _drawService
+                .GenerateFinalAsync(competitionId);
 
             return await GetDrawResponseAsync(
                 competitionId,
@@ -416,10 +346,6 @@ public class KnockoutController : ControllerBase
         }
     }
 
-    // ==========================================
-    // CHAMPIONSHIP FINAL FIXTURE
-    // ==========================================
-
     [HttpGet("{competitionId:guid}/final")]
     public Task<IActionResult> GetFinal(
         Guid competitionId)
@@ -427,6 +353,190 @@ public class KnockoutController : ControllerBase
         return GetRoundFixturesAsync(
             competitionId,
             KnockoutRound.Final);
+    }
+
+    // ==========================================
+    // SIMULATE CHAMPIONSHIP FINAL
+    // ==========================================
+
+    [HttpPost("{competitionId:guid}/final/simulate")]
+    public async Task<IActionResult> SimulateFinal(
+        Guid competitionId)
+    {
+        try
+        {
+            var result = await _simulationService
+                .SimulateFinalAsync(competitionId);
+
+            return Ok(result);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { Message = ex.Message });
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { Message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(new { Message = ex.Message });
+        }
+    }
+
+    // ==========================================
+    // GET CHAMPION AND RUNNER-UP
+    // ==========================================
+
+    [HttpGet("{competitionId:guid}/champion")]
+    public async Task<IActionResult> GetChampion(
+        Guid competitionId)
+    {
+        if (competitionId == Guid.Empty)
+        {
+            return BadRequest(new
+            {
+                Message = "A valid competition ID is required."
+            });
+        }
+
+        var finalTie = await _context.KnockoutTies
+            .AsNoTracking()
+            .Where(t =>
+                t.CompetitionId == competitionId &&
+                t.Round == KnockoutRound.Final)
+            .Include(t => t.HomeTeam)
+            .Include(t => t.AwayTeam)
+            .Include(t => t.WinnerTeam)
+            .Include(t => t.Matches)
+            .SingleOrDefaultAsync();
+
+        if (finalTie == null)
+        {
+            return NotFound(new
+            {
+                Message = "Championship final not found."
+            });
+        }
+
+        if (!finalTie.IsCompleted ||
+            !finalTie.WinnerTeamId.HasValue)
+        {
+            return Conflict(new
+            {
+                Message =
+                    "The championship final has not been completed."
+            });
+        }
+
+        if (finalTie.Matches.Count != 1)
+        {
+            return Conflict(new
+            {
+                Message =
+                    "The final must contain exactly one match."
+            });
+        }
+
+        var finalMatch = finalTie.Matches.Single();
+
+        if (!finalMatch.IsPlayed)
+        {
+            return Conflict(new
+            {
+                Message = "The final match has not been played."
+            });
+        }
+
+        if (finalTie.WinnerTeamId != finalTie.HomeTeamId &&
+            finalTie.WinnerTeamId != finalTie.AwayTeamId)
+        {
+            return Conflict(new
+            {
+                Message = "Invalid championship winner."
+            });
+        }
+
+        var runnerUpId =
+            finalTie.WinnerTeamId == finalTie.HomeTeamId
+                ? finalTie.AwayTeamId
+                : finalTie.HomeTeamId;
+
+        var runnerUpName =
+            finalTie.WinnerTeamId == finalTie.HomeTeamId
+                ? finalTie.AwayTeam.Name
+                : finalTie.HomeTeam.Name;
+
+        string decision;
+
+        if (finalMatch.WentToPenalties)
+        {
+            decision = "Penalties";
+        }
+        else if (finalMatch.WentToExtraTime)
+        {
+            decision = "ExtraTime";
+        }
+        else
+        {
+            decision = "Regulation";
+        }
+
+        int homeTotalGoals =
+            finalMatch.HomeScore.GetValueOrDefault() +
+            finalMatch.HomeExtraTimeScore.GetValueOrDefault();
+
+        int awayTotalGoals =
+            finalMatch.AwayScore.GetValueOrDefault() +
+            finalMatch.AwayExtraTimeScore.GetValueOrDefault();
+
+        return Ok(new
+        {
+            CompetitionId = competitionId,
+            Status = "Completed",
+            Round = "Final",
+
+            Champion = new
+            {
+                TeamId = finalTie.WinnerTeamId,
+                TeamName = finalTie.WinnerTeam!.Name
+            },
+
+            RunnerUp = new
+            {
+                TeamId = runnerUpId,
+                TeamName = runnerUpName
+            },
+
+            Final = new
+            {
+                MatchId = finalMatch.Id,
+
+                HomeTeamId = finalTie.HomeTeamId,
+                HomeTeam = finalTie.HomeTeam.Name,
+
+                AwayTeamId = finalTie.AwayTeamId,
+                AwayTeam = finalTie.AwayTeam.Name,
+
+                finalMatch.HomeScore,
+                finalMatch.AwayScore,
+
+                finalMatch.WentToExtraTime,
+                finalMatch.HomeExtraTimeScore,
+                finalMatch.AwayExtraTimeScore,
+
+                HomeTotalGoals = homeTotalGoals,
+                AwayTotalGoals = awayTotalGoals,
+
+                finalMatch.WentToPenalties,
+                finalMatch.HomePenaltyScore,
+                finalMatch.AwayPenaltyScore,
+
+                finalMatch.IsPlayed,
+
+                Decision = decision
+            }
+        });
     }
 
     // ==========================================
@@ -486,6 +596,7 @@ public class KnockoutController : ControllerBase
             Message = message,
             CompetitionId = competitionId,
             Round = round.ToString(),
+
             TotalTies = ties.Count,
             TotalMatches = ties.Sum(t => t.Matches.Count),
 
@@ -592,10 +703,11 @@ public class KnockoutController : ControllerBase
     // SHARED BATCH SIMULATION
     // ==========================================
 
-    private async Task<IActionResult> SimulateRoundLegsResponseAsync(
-        Guid competitionId,
-        KnockoutRound round,
-        int leg)
+    private async Task<IActionResult>
+        SimulateRoundLegsResponseAsync(
+            Guid competitionId,
+            KnockoutRound round,
+            int leg)
     {
         try
         {
@@ -622,7 +734,7 @@ public class KnockoutController : ControllerBase
     }
 
     // ==========================================
-    // SHARED QUALIFIED TEAMS RESPONSE
+    // SHARED ROUND WINNERS
     // ==========================================
 
     private async Task<IActionResult> GetRoundWinnersAsync(
