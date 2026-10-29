@@ -295,6 +295,9 @@ namespace ChampionsLeagueSimulatorApi.Migrations
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
 
+                    b.Property<int>("EmailVerificationFailedAttempts")
+                        .HasColumnType("integer");
+
                     b.Property<DateTime?>("EmailVerificationTokenExpiresAtUtc")
                         .HasColumnType("timestamp with time zone");
 
