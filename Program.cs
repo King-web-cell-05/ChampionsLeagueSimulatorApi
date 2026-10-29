@@ -68,6 +68,8 @@ builder.Services.AddScoped<CompetitionService>();
 builder.Services.AddScoped<KnockoutDrawService>();
 builder.Services.AddScoped<KnockoutSimulationService>();
 builder.Services.AddScoped<KnockoutBatchSimulationService>();
+// Brevo transactional email service
+builder.Services.AddHttpClient<BrevoEmailService>();
 
 // ==========================================
 // POSTGRESQL DATABASE
@@ -161,6 +163,7 @@ builder.Services.AddSwaggerGen(options =>
             "fixtures, standings, knockout rounds, " +
             "match simulation, and championship results."
     });
+
 
     // ======================================
     // JWT BEARER SECURITY DEFINITION
