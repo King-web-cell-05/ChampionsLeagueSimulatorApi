@@ -19,10 +19,7 @@ public class User
     [Required]
     public string PasswordHash { get; set; } = string.Empty;
 
-    // =====================================
-    // EMAIL VERIFICATION
-    // =====================================
-
+    // Email verification
     public bool IsEmailVerified { get; set; } = false;
 
     public DateTime? EmailVerifiedAtUtc { get; set; }
@@ -32,9 +29,7 @@ public class User
 
     public DateTime? EmailVerificationTokenExpiresAtUtc { get; set; }
 
-    // =====================================
-    // ACCOUNT INFORMATION
-    // =====================================
+    public int EmailVerificationFailedAttempts { get; set; } = 0;
 
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
