@@ -19,5 +19,22 @@ public class User
     [Required]
     public string PasswordHash { get; set; } = string.Empty;
 
+    // =====================================
+    // EMAIL VERIFICATION
+    // =====================================
+
+    public bool IsEmailVerified { get; set; } = false;
+
+    public DateTime? EmailVerifiedAtUtc { get; set; }
+
+    [MaxLength(64)]
+    public string? EmailVerificationTokenHash { get; set; }
+
+    public DateTime? EmailVerificationTokenExpiresAtUtc { get; set; }
+
+    // =====================================
+    // ACCOUNT INFORMATION
+    // =====================================
+
     public DateTime CreatedAtUtc { get; set; } = DateTime.UtcNow;
 }
