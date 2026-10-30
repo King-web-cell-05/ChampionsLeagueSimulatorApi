@@ -5,11 +5,13 @@ using ChampionsLeagueSimulatorAPI.Services;
 
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 
 using System.Security.Claims;
+using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -68,7 +70,11 @@ builder.Services.AddScoped<CompetitionService>();
 builder.Services.AddScoped<KnockoutDrawService>();
 builder.Services.AddScoped<KnockoutSimulationService>();
 builder.Services.AddScoped<KnockoutBatchSimulationService>();
-// Brevo transactional email service
+
+// ==========================================
+// BREVO TRANSACTIONAL EMAIL
+// ==========================================
+
 builder.Services.AddHttpClient<BrevoEmailService>();
 
 // ==========================================
@@ -104,12 +110,10 @@ builder.Services
                 ValidAudience = jwtAudience,
 
                 ValidateIssuerSigningKey = true,
-
                 IssuerSigningKey =
                     new SymmetricSecurityKey(jwtKeyBytes),
 
                 ValidateLifetime = true,
-
                 ClockSkew = TimeSpan.FromMinutes(1),
 
                 NameClaimType = ClaimTypes.Name,
@@ -139,6 +143,73 @@ builder.Services.AddCors(options =>
 });
 
 // ==========================================
+// AUTHENTICATION RATE LIMITING
+// ==========================================
+
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode =
+        StatusCodes.Status429TooManyRequests;
+
+    // LOGIN: 5 requests per minute
+    options.AddPolicy("auth-login", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: GetClientPartition(context),
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
+
+    // REGISTER: 3 requests per 10 minutes
+    options.AddPolicy("auth-register", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: GetClientPartition(context),
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 3,
+                Window = TimeSpan.FromMinutes(10),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
+
+    // VERIFY EMAIL: 10 requests per 10 minutes
+    options.AddPolicy("auth-verify", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: GetClientPartition(context),
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(10),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
+
+    // RESEND CODE: 3 requests per 10 minutes
+    options.AddPolicy("auth-resend", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: GetClientPartition(context),
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 3,
+                Window = TimeSpan.FromMinutes(10),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            }));
+});
+
+// Uses the direct client IP.
+// Configure trusted forwarded headers separately
+// if deploying behind a reverse proxy.
+static string GetClientPartition(HttpContext context)
+{
+    return context.Connection.RemoteIpAddress?
+        .ToString() ?? "unknown";
+}
+
+// ==========================================
 // SWAGGER CONFIGURATION
 // ==========================================
 
@@ -146,10 +217,6 @@ builder.Services.AddEndpointsApiExplorer();
 
 builder.Services.AddSwaggerGen(options =>
 {
-    // ======================================
-    // API INFORMATION
-    // ======================================
-
     options.SwaggerDoc("v1", new OpenApiInfo
     {
         Title = "FootballSim API",
@@ -164,7 +231,6 @@ builder.Services.AddSwaggerGen(options =>
             "match simulation, and championship results."
     });
 
-
     // ======================================
     // JWT BEARER SECURITY DEFINITION
     // ======================================
@@ -174,13 +240,9 @@ builder.Services.AddSwaggerGen(options =>
         new OpenApiSecurityScheme
         {
             Name = "Authorization",
-
             Type = SecuritySchemeType.Http,
-
             Scheme = "bearer",
-
             BearerFormat = "JWT",
-
             In = ParameterLocation.Header,
 
             Description =
@@ -191,8 +253,8 @@ builder.Services.AddSwaggerGen(options =>
 
     // ======================================
     // JWT SECURITY REQUIREMENT
-    // Compatible with Swashbuckle 10.1.3
-    // and Microsoft.OpenApi 2.7.5
+    // Swashbuckle 10.1.3
+    // Microsoft.OpenApi 2.7.5
     // ======================================
 
     options.AddSecurityRequirement(document =>
@@ -246,6 +308,14 @@ app.UseHttpsRedirection();
 // ==========================================
 
 app.UseCors("Frontend");
+
+// ==========================================
+// RATE LIMITING
+// ==========================================
+
+app.UseRouting();
+
+app.UseRateLimiter();
 
 // ==========================================
 // AUTHENTICATION & AUTHORIZATION

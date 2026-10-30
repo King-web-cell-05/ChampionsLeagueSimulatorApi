@@ -13,6 +13,7 @@ using ChampionsLeagueSimulatorAPI.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 
@@ -58,6 +59,7 @@ public class AuthController : ControllerBase
     // ==========================================
 
     [AllowAnonymous]
+    [EnableRateLimiting("auth-register")]
     [HttpPost("register")]
     public async Task<IActionResult> Register(
         [FromBody] RegisterRequest request,
@@ -135,7 +137,7 @@ public class AuthController : ControllerBase
             });
         }
 
-        return StatusCode(201, new
+        return StatusCode(StatusCodes.Status201Created, new
         {
             message =
                 "Registration successful. Check your email " +
@@ -157,6 +159,7 @@ public class AuthController : ControllerBase
     // ==========================================
 
     [AllowAnonymous]
+    [EnableRateLimiting("auth-verify")]
     [HttpPost("verify-email")]
     public async Task<IActionResult> VerifyEmail(
         [FromBody] VerifyEmailRequest request,
@@ -258,6 +261,7 @@ public class AuthController : ControllerBase
     // ==========================================
 
     [AllowAnonymous]
+    [EnableRateLimiting("auth-resend")]
     [HttpPost("resend-verification-code")]
     public async Task<IActionResult> ResendVerificationCode(
         [FromBody] ResendVerificationRequest request,
@@ -325,6 +329,7 @@ public class AuthController : ControllerBase
     // ==========================================
 
     [AllowAnonymous]
+    [EnableRateLimiting("auth-login")]
     [HttpPost("login")]
     public async Task<IActionResult> Login(
         [FromBody] LoginRequest request,
@@ -508,7 +513,8 @@ public sealed class VerifyEmailRequest
     public string Email { get; set; } = string.Empty;
 
     [Required]
-    [RegularExpression(@"^\d{6}$",
+    [RegularExpression(
+        @"^\d{6}$",
         ErrorMessage = "Enter a valid 6-digit code.")]
     public string Code { get; set; } = string.Empty;
 }
