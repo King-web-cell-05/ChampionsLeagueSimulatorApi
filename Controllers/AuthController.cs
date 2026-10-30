@@ -1,5 +1,6 @@
 ﻿
 using System.ComponentModel.DataAnnotations;
+using System.Data;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
@@ -37,7 +38,11 @@ public class AuthController : ControllerBase
     private static readonly TimeSpan ResendCooldown =
         TimeSpan.FromSeconds(60);
 
+    private static readonly TimeSpan ResendWindow =
+        TimeSpan.FromHours(1);
+
     private const int MaxAttempts = 5;
+    private const int MaxResendsPerWindow = 5;
 
     public AuthController(
         AppDbContext context,
@@ -85,7 +90,9 @@ public class AuthController : ControllerBase
             FullName = request.FullName.Trim(),
             Email = email,
             IsEmailVerified = false,
-            CreatedAtUtc = DateTime.UtcNow
+            CreatedAtUtc = DateTime.UtcNow,
+            EmailVerificationFailedAttempts = 0,
+            EmailVerificationResendCount = 0
         };
 
         user.PasswordHash = _passwordHasher.HashPassword(
@@ -137,7 +144,7 @@ public class AuthController : ControllerBase
             });
         }
 
-        return StatusCode(StatusCodes.Status201Created, new
+        return StatusCode(201, new
         {
             message =
                 "Registration successful. Check your email " +
@@ -167,10 +174,17 @@ public class AuthController : ControllerBase
     {
         var email = request.Email.Trim().ToLowerInvariant();
 
-        var user = await _context.Users
-            .FirstOrDefaultAsync(
-                u => u.Email.ToLower() == email,
+        await using var transaction =
+            await _context.Database.BeginTransactionAsync(
+                IsolationLevel.ReadCommitted,
                 cancellationToken);
+
+        // Lock the matching PostgreSQL row.
+        // Concurrent verification and resend requests
+        // must wait until this transaction finishes.
+        var user = await GetLockedUserAsync(
+            email,
+            cancellationToken);
 
         if (user == null)
         {
@@ -184,14 +198,17 @@ public class AuthController : ControllerBase
         {
             return Ok(new
             {
-                message = "Email is already verified."
+                message = "Email is already verified.",
+                isEmailVerified = true
             });
         }
 
-        if (user.EmailVerificationTokenHash == null ||
-            user.EmailVerificationTokenExpiresAtUtc == null ||
-            DateTime.UtcNow >
-                user.EmailVerificationTokenExpiresAtUtc)
+        var now = DateTime.UtcNow;
+
+        if (string.IsNullOrWhiteSpace(
+                user.EmailVerificationTokenHash) ||
+            !user.EmailVerificationTokenExpiresAtUtc.HasValue ||
+            now >= user.EmailVerificationTokenExpiresAtUtc.Value)
         {
             return BadRequest(new
             {
@@ -230,6 +247,8 @@ public class AuthController : ControllerBase
 
             await _context.SaveChangesAsync(cancellationToken);
 
+            await transaction.CommitAsync(cancellationToken);
+
             return BadRequest(new
             {
                 message =
@@ -239,13 +258,16 @@ public class AuthController : ControllerBase
             });
         }
 
+        // Consume the code inside the locked transaction.
         user.IsEmailVerified = true;
-        user.EmailVerifiedAtUtc = DateTime.UtcNow;
+        user.EmailVerifiedAtUtc = now;
         user.EmailVerificationTokenHash = null;
         user.EmailVerificationTokenExpiresAtUtc = null;
         user.EmailVerificationFailedAttempts = 0;
 
         await _context.SaveChangesAsync(cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
 
         return Ok(new
         {
@@ -276,48 +298,108 @@ public class AuthController : ControllerBase
                 "a verification code will be sent when eligible."
         };
 
-        var user = await _context.Users
-            .FirstOrDefaultAsync(
-                u => u.Email.ToLower() == email,
+        string? codeToSend = null;
+        string? recipientEmail = null;
+        string? recipientName = null;
+        Guid? recipientUserId = null;
+
+        // Keep the transaction short.
+        // Do not send emails while holding database locks.
+        await using (var transaction =
+            await _context.Database.BeginTransactionAsync(
+                IsolationLevel.ReadCommitted,
+                cancellationToken))
+        {
+            var user = await GetLockedUserAsync(
+                email,
                 cancellationToken);
 
-        if (user == null || user.IsEmailVerified)
-        {
-            return Ok(genericResponse);
-        }
-
-        if (user.EmailVerificationTokenExpiresAtUtc.HasValue)
-        {
-            var lastIssuedAt =
-                user.EmailVerificationTokenExpiresAtUtc.Value
-                    .Subtract(CodeLifetime);
-
-            if (DateTime.UtcNow - lastIssuedAt < ResendCooldown)
+            if (user == null || user.IsEmailVerified)
             {
                 return Ok(genericResponse);
             }
+
+            var now = DateTime.UtcNow;
+
+            // ======================================
+            // RESET EXPIRED RESEND QUOTA WINDOW
+            // ======================================
+
+            if (!user.EmailVerificationResendWindowStartedAtUtc
+                    .HasValue ||
+                now - user.EmailVerificationResendWindowStartedAtUtc
+                    .Value >= ResendWindow)
+            {
+                user.EmailVerificationResendWindowStartedAtUtc = now;
+                user.EmailVerificationResendCount = 0;
+            }
+
+            // ======================================
+            // PERSISTENT PER-ACCOUNT RESEND LIMIT
+            // ======================================
+
+            if (user.EmailVerificationResendCount >=
+                MaxResendsPerWindow)
+            {
+                return Ok(genericResponse);
+            }
+
+            // ======================================
+            // 60-SECOND RESEND COOLDOWN
+            // ======================================
+
+            if (user.EmailVerificationTokenExpiresAtUtc.HasValue)
+            {
+                var lastIssuedAt =
+                    user.EmailVerificationTokenExpiresAtUtc.Value
+                        .Subtract(CodeLifetime);
+
+                if (now - lastIssuedAt < ResendCooldown)
+                {
+                    return Ok(genericResponse);
+                }
+            }
+
+            // ======================================
+            // GENERATE NEW VERIFICATION CODE
+            // ======================================
+
+            var code = GenerateCode();
+
+            SetVerificationCode(user, code);
+
+            user.EmailVerificationResendCount++;
+
+            await _context.SaveChangesAsync(cancellationToken);
+
+            await transaction.CommitAsync(cancellationToken);
+
+            codeToSend = code;
+            recipientEmail = user.Email;
+            recipientName = user.FullName;
+            recipientUserId = user.Id;
         }
 
-        var code = GenerateCode();
-
-        SetVerificationCode(user, code);
-
-        await _context.SaveChangesAsync(cancellationToken);
-
-        try
+        // Send only after committing the new code.
+        if (codeToSend != null &&
+            recipientEmail != null &&
+            recipientName != null)
         {
-            await _emailService.SendVerificationCodeAsync(
-                user.Email,
-                user.FullName,
-                code,
-                cancellationToken);
-        }
-        catch (HttpRequestException ex)
-        {
-            _logger.LogWarning(
-                ex,
-                "Verification resend failed for user {UserId}",
-                user.Id);
+            try
+            {
+                await _emailService.SendVerificationCodeAsync(
+                    recipientEmail,
+                    recipientName,
+                    codeToSend,
+                    cancellationToken);
+            }
+            catch (HttpRequestException ex)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "Verification resend failed for user {UserId}",
+                    recipientUserId);
+            }
         }
 
         return Ok(genericResponse);
@@ -405,7 +487,34 @@ public class AuthController : ControllerBase
     }
 
     // ==========================================
-    // VERIFICATION HELPERS
+    // POSTGRESQL ROW-LEVEL LOCKING
+    // ==========================================
+
+    private async Task<User?> GetLockedUserAsync(
+        string email,
+        CancellationToken cancellationToken)
+    {
+        // Must be called inside an active transaction.
+        // FOR UPDATE locks the user row until commit
+        // or rollback.
+        //
+        // FromSqlInterpolated parameterizes the email,
+        // preventing SQL injection.
+
+        return await _context.Users
+            .FromSqlInterpolated(
+                $"""
+                SELECT *
+                FROM "Users"
+                WHERE LOWER("Email") = {email}
+                FOR UPDATE
+                """)
+            .AsTracking()
+            .SingleOrDefaultAsync(cancellationToken);
+    }
+
+    // ==========================================
+    // VERIFICATION CODE GENERATION
     // ==========================================
 
     private static string GenerateCode()
@@ -417,6 +526,10 @@ public class AuthController : ControllerBase
         return number.ToString("D6");
     }
 
+    // ==========================================
+    // STORE VERIFICATION CODE HASH
+    // ==========================================
+
     private void SetVerificationCode(User user, string code)
     {
         user.EmailVerificationTokenHash =
@@ -427,6 +540,10 @@ public class AuthController : ControllerBase
 
         user.EmailVerificationFailedAttempts = 0;
     }
+
+    // ==========================================
+    // HASH VERIFICATION CODE
+    // ==========================================
 
     private string HashCode(Guid userId, string code)
     {

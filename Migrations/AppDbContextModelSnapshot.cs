@@ -298,6 +298,12 @@ namespace ChampionsLeagueSimulatorApi.Migrations
                     b.Property<int>("EmailVerificationFailedAttempts")
                         .HasColumnType("integer");
 
+                    b.Property<int>("EmailVerificationResendCount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("EmailVerificationResendWindowStartedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTime?>("EmailVerificationTokenExpiresAtUtc")
                         .HasColumnType("timestamp with time zone");
 
