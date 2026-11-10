@@ -33,13 +33,22 @@ namespace ChampionsLeagueSimulatorApi.Migrations
 
                     b.Property<string>("Name")
                         .IsRequired()
-                        .HasColumnType("text");
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)");
+
+                    b.Property<Guid?>("OwnerId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("Season")
                         .IsRequired()
-                        .HasColumnType("text");
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("OwnerId");
+
+                    b.HasIndex("OwnerId", "CreatedDate");
 
                     b.ToTable("Competitions");
                 });
@@ -270,18 +279,35 @@ namespace ChampionsLeagueSimulatorApi.Migrations
 
                     b.Property<string>("Country")
                         .IsRequired()
-                        .HasColumnType("text");
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<bool>("IsDefault")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
 
                     b.Property<string>("LogoUrl")
                         .HasColumnType("text");
 
                     b.Property<string>("Name")
                         .IsRequired()
-                        .HasColumnType("text");
+                        .HasMaxLength(150)
+                        .HasColumnType("character varying(150)");
+
+                    b.Property<Guid?>("OwnerId")
+                        .HasColumnType("uuid");
 
                     b.HasKey("Id");
 
-                    b.ToTable("Teams");
+                    b.HasIndex("OwnerId");
+
+                    b.HasIndex("IsDefault", "OwnerId");
+
+                    b.ToTable("Teams", t =>
+                        {
+                            t.HasCheckConstraint("CK_Teams_Ownership", "(\"IsDefault\" = TRUE AND \"OwnerId\" IS NULL)\r\nOR\r\n(\"IsDefault\" = FALSE AND \"OwnerId\" IS NOT NULL)");
+                        });
                 });
 
             modelBuilder.Entity("ChampionsLeagueSimulatorAPI.Entities.User", b =>
@@ -335,6 +361,16 @@ namespace ChampionsLeagueSimulatorApi.Migrations
                         .IsUnique();
 
                     b.ToTable("Users");
+                });
+
+            modelBuilder.Entity("ChampionsLeagueSimulatorAPI.Entities.Competition", b =>
+                {
+                    b.HasOne("ChampionsLeagueSimulatorAPI.Entities.User", "Owner")
+                        .WithMany()
+                        .HasForeignKey("OwnerId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("Owner");
                 });
 
             modelBuilder.Entity("ChampionsLeagueSimulatorAPI.Entities.CompetitionTeam", b =>
@@ -459,6 +495,16 @@ namespace ChampionsLeagueSimulatorApi.Migrations
                         .IsRequired();
 
                     b.Navigation("Team");
+                });
+
+            modelBuilder.Entity("ChampionsLeagueSimulatorAPI.Entities.Team", b =>
+                {
+                    b.HasOne("ChampionsLeagueSimulatorAPI.Entities.User", "Owner")
+                        .WithMany()
+                        .HasForeignKey("OwnerId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("Owner");
                 });
 
             modelBuilder.Entity("ChampionsLeagueSimulatorAPI.Entities.Competition", b =>
