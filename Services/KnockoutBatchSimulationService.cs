@@ -1,6 +1,10 @@
 ﻿
+using System.Security.Claims;
+
 using ChampionsLeagueSimulatorAPI.Data;
 using ChampionsLeagueSimulatorAPI.Entities;
+
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 
 namespace ChampionsLeagueSimulatorAPI.Services;
@@ -9,17 +13,70 @@ public class KnockoutBatchSimulationService
 {
     private readonly AppDbContext _context;
     private readonly KnockoutSimulationService _simulationService;
+    private readonly IHttpContextAccessor _httpContextAccessor;
 
     public KnockoutBatchSimulationService(
         AppDbContext context,
-        KnockoutSimulationService simulationService)
+        KnockoutSimulationService simulationService,
+        IHttpContextAccessor httpContextAccessor)
     {
         _context = context;
         _simulationService = simulationService;
+        _httpContextAccessor = httpContextAccessor;
     }
 
     // ==========================================
-    // EXISTING PLAY-OFF SIMULATION
+    // GET AUTHENTICATED USER
+    // ==========================================
+
+    private Guid GetCurrentUserId()
+    {
+        var user = _httpContextAccessor.HttpContext?.User;
+
+        var value =
+            user?.FindFirstValue(ClaimTypes.NameIdentifier)
+            ?? user?.FindFirstValue("sub");
+
+        if (user?.Identity?.IsAuthenticated != true ||
+            !Guid.TryParse(value, out var userId))
+        {
+            throw new UnauthorizedAccessException(
+                "Authentication is required.");
+        }
+
+        return userId;
+    }
+
+    // ==========================================
+    // VERIFY COMPETITION OWNERSHIP
+    // ==========================================
+
+    private async Task VerifyOwnershipAsync(
+        Guid competitionId,
+        Guid userId)
+    {
+        if (competitionId == Guid.Empty)
+        {
+            throw new ArgumentException(
+                "Invalid competition ID.",
+                nameof(competitionId));
+        }
+
+        var ownsCompetition = await _context.Competitions
+            .AsNoTracking()
+            .AnyAsync(c =>
+                c.Id == competitionId &&
+                c.OwnerId == userId);
+
+        if (!ownsCompetition)
+        {
+            throw new KeyNotFoundException(
+                "Competition not found.");
+        }
+    }
+
+    // ==========================================
+    // PLAY-OFF SIMULATION
     // ==========================================
 
     public Task<object> SimulatePlayoffLegsAsync(
@@ -55,17 +112,23 @@ public class KnockoutBatchSimulationService
         KnockoutRound round,
         int leg)
     {
-        if (competitionId == Guid.Empty)
-            throw new ArgumentException(
-                "Invalid competition ID.");
+        var userId = GetCurrentUserId();
+
+        await VerifyOwnershipAsync(
+            competitionId,
+            userId);
 
         if (leg != 1 && leg != 2)
+        {
             throw new ArgumentException(
                 "Leg must be 1 or 2.");
+        }
 
         if (round == KnockoutRound.Final)
+        {
             throw new InvalidOperationException(
                 "The final requires single-match simulation.");
+        }
 
         int expectedTies = round switch
         {
@@ -73,22 +136,34 @@ public class KnockoutBatchSimulationService
             KnockoutRound.RoundOf16 => 8,
             KnockoutRound.QuarterFinal => 4,
             KnockoutRound.SemiFinal => 2,
+
             _ => throw new ArgumentException(
                 "Unsupported knockout round.")
         };
+
+        // ======================================
+        // LOAD OWNED COMPETITION TIES
+        // ======================================
 
         var ties = await _context.KnockoutTies
             .AsNoTracking()
             .Where(t =>
                 t.CompetitionId == competitionId &&
+                t.Competition.OwnerId == userId &&
                 t.Round == round)
             .Include(t => t.Matches)
             .OrderBy(t => t.TieNumber)
             .ToListAsync();
 
         if (ties.Count != expectedTies)
+        {
             throw new InvalidOperationException(
                 $"Expected {expectedTies} ties for {round}.");
+        }
+
+        // ======================================
+        // VALIDATE MATCH LEGS
+        // ======================================
 
         if (ties.Any(t =>
             t.Matches.Count != 2 ||
@@ -107,6 +182,10 @@ public class KnockoutBatchSimulationService
                 "simulating second legs.");
         }
 
+        // ======================================
+        // GET PENDING MATCHES
+        // ======================================
+
         var pendingMatches = ties
             .Where(t => !t.IsCompleted)
             .SelectMany(t => t.Matches
@@ -123,19 +202,33 @@ public class KnockoutBatchSimulationService
 
         var results = new List<object>();
 
+        // ======================================
+        // SIMULATE MATCHES
+        // ======================================
+
         foreach (var pending in pendingMatches)
         {
+            // Revalidate ownership before
+            // invoking the match simulation.
+            await VerifyOwnershipAsync(
+                competitionId,
+                userId);
+
             var result = await _simulationService
                 .SimulateMatchAsync(pending.MatchId);
 
             results.Add(result);
         }
 
-        // Reload the updated stage state.
+        // ======================================
+        // RELOAD UPDATED ROUND STATE
+        // ======================================
+
         var updatedTies = await _context.KnockoutTies
             .AsNoTracking()
             .Where(t =>
                 t.CompetitionId == competitionId &&
+                t.Competition.OwnerId == userId &&
                 t.Round == round)
             .Include(t => t.Matches)
             .ToListAsync();
@@ -164,7 +257,8 @@ public class KnockoutBatchSimulationService
             CompletedTies = updatedTies
                 .Count(t => t.IsCompleted),
 
-            IsRoundCompleted = updatedTies.Count == expectedTies &&
+            IsRoundCompleted =
+                updatedTies.Count == expectedTies &&
                 updatedTies.All(t =>
                     t.IsCompleted &&
                     t.WinnerTeamId.HasValue),
