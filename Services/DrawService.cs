@@ -1,4 +1,5 @@
-﻿
+﻿using System.Security.Claims;
+using Microsoft.AspNetCore.Http;
 using ChampionsLeagueSimulatorAPI.Data;
 using ChampionsLeagueSimulatorAPI.Entities;
 using Google.OrTools.Sat;
@@ -16,23 +17,55 @@ public class DrawService
     private const int RequiredFixtures = 144;
 
     private readonly AppDbContext _context;
+    private readonly IHttpContextAccessor _httpContextAccessor;
 
-    public DrawService(AppDbContext context)
+    public DrawService(
+        AppDbContext context,
+        IHttpContextAccessor httpContextAccessor)
     {
         _context = context;
+        _httpContextAccessor = httpContextAccessor;
     }
 
-    public async Task<List<Match>> GenerateLeagueFixtures(
-        Guid competitionId)
+    private Guid GetCurrentUserId()
+    {
+        var user = _httpContextAccessor.HttpContext?.User;
+        var claim = user?.FindFirstValue(ClaimTypes.NameIdentifier)
+            ?? user?.FindFirstValue("sub");
+
+        if (user?.Identity?.IsAuthenticated != true ||
+            !Guid.TryParse(claim, out var userId))
+        {
+            throw new UnauthorizedAccessException(
+                "Authentication is required to generate fixtures.");
+        }
+
+        return userId;
+    }
+
+    private async Task VerifyOwnershipAsync(Guid competitionId, Guid userId)
     {
         if (competitionId == Guid.Empty)
-            throw new ArgumentException("Invalid competition ID.");
+            throw new ArgumentException("Invalid competition ID.", nameof(competitionId));
 
-        var competitionExists = await _context.Competitions
-            .AnyAsync(c => c.Id == competitionId);
+        var ownsCompetition = await _context.Competitions
+            .AsNoTracking()
+            .AnyAsync(c => c.Id == competitionId && c.OwnerId == userId);
 
-        if (!competitionExists)
+        if (!ownsCompetition)
             throw new KeyNotFoundException("Competition not found.");
+    }
+
+    // Compatibility overload: obtain the user from the validated HTTP identity.
+    public Task<List<Match>> GenerateLeagueFixtures(Guid competitionId)
+        => GenerateLeagueFixtures(competitionId, GetCurrentUserId());
+
+    // For trusted backend callers only. Never accept userId from a client request.
+    public async Task<List<Match>> GenerateLeagueFixtures(
+        Guid competitionId,
+        Guid userId)
+    {
+        await VerifyOwnershipAsync(competitionId, userId);
 
         if (await _context.Matches.AnyAsync(
             m => m.CompetitionId == competitionId))
@@ -236,6 +269,9 @@ public class DrawService
         await using var transaction =
             await _context.Database.BeginTransactionAsync(
                 IsolationLevel.Serializable);
+
+        // Recheck ownership inside the transaction, immediately before writing.
+        await VerifyOwnershipAsync(competitionId, userId);
 
         if (await _context.Matches.AnyAsync(
             m => m.CompetitionId == competitionId))
