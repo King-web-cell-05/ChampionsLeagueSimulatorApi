@@ -281,6 +281,22 @@ builder.Services.AddSwaggerGen(options =>
         });
 });
 
+var webRootPath = Path.Combine(
+    builder.Environment.ContentRootPath,
+    "wwwroot"
+);
+
+Directory.CreateDirectory(webRootPath);
+
+Directory.CreateDirectory(
+    Path.Combine(
+        webRootPath,
+        "uploads",
+        "team-logos"
+    )
+);
+
+
 // ==========================================
 // BUILD APPLICATION
 // ==========================================
@@ -315,6 +331,7 @@ app.UseSwaggerUI(options =>
 
 app.UseHttpsRedirection();
 
+app.UseStaticFiles();
 // ==========================================
 // CORS
 // ==========================================
