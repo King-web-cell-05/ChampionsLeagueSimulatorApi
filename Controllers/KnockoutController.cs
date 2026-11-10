@@ -1,4 +1,7 @@
 ﻿
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc.Filters;
 using ChampionsLeagueSimulatorAPI.Data;
 using ChampionsLeagueSimulatorAPI.Entities;
 using ChampionsLeagueSimulatorAPI.Services;
@@ -8,8 +11,9 @@ using Microsoft.EntityFrameworkCore;
 namespace ChampionsLeagueSimulatorAPI.Controllers;
 
 [ApiController]
+[Authorize]
 [Route("api/[controller]")]
-public class KnockoutController : ControllerBase
+public class KnockoutController : ControllerBase, IAsyncActionFilter
 {
     private readonly KnockoutDrawService _drawService;
     private readonly KnockoutSimulationService _simulationService;
@@ -26,6 +30,100 @@ public class KnockoutController : ControllerBase
         _simulationService = simulationService;
         _batchSimulationService = batchSimulationService;
         _context = context;
+    }
+
+    // ==========================================
+    // OWNERSHIP AUTHORIZATION FOR ALL ENDPOINTS
+    // ==========================================
+    // This filter runs before each public action, including actions
+    // that delegate to the shared private helper methods.
+    public async Task OnActionExecutionAsync(
+        ActionExecutingContext context,
+        ActionExecutionDelegate next)
+    {
+        var rawUserId =
+            User.FindFirstValue(ClaimTypes.NameIdentifier)
+            ?? User.FindFirstValue("sub");
+
+        if (!Guid.TryParse(rawUserId, out var userId))
+        {
+            context.Result = Unauthorized(new
+            {
+                Message = "Invalid or expired authentication session."
+            });
+            return;
+        }
+
+        if (context.ActionArguments.TryGetValue("competitionId", out var competitionArg)
+            && competitionArg is Guid competitionId)
+        {
+            if (competitionId == Guid.Empty)
+            {
+                context.Result = BadRequest(new
+                {
+                    Message = "A valid competition ID is required."
+                });
+                return;
+            }
+
+            var ownsCompetition = await _context.Competitions
+                .AsNoTracking()
+                .AnyAsync(c => c.Id == competitionId && c.OwnerId == userId);
+
+            if (!ownsCompetition)
+            {
+                context.Result = NotFound(new
+                {
+                    Message = "Competition not found."
+                });
+                return;
+            }
+        }
+        else if (context.ActionArguments.TryGetValue("matchId", out var matchArg)
+                 && matchArg is Guid matchId)
+        {
+            if (matchId == Guid.Empty)
+            {
+                context.Result = BadRequest(new
+                {
+                    Message = "A valid knockout match ID is required."
+                });
+                return;
+            }
+
+            // Resolve match -> tie -> competition and verify its owner.
+            // Joining by CompetitionId avoids depending on a navigation
+            // property from KnockoutTie to Competition.
+            var ownsMatch = await _context.KnockoutTies
+                .AsNoTracking()
+                .Where(t => t.Matches.Any(m => m.Id == matchId))
+                .Join(
+                    _context.Competitions.AsNoTracking(),
+                    tie => tie.CompetitionId,
+                    competition => competition.Id,
+                    (tie, competition) => competition.OwnerId)
+                .AnyAsync(ownerId => ownerId == userId);
+
+            if (!ownsMatch)
+            {
+                context.Result = NotFound(new
+                {
+                    Message = "Knockout match not found."
+                });
+                return;
+            }
+        }
+        else
+        {
+            // Fail closed if a future endpoint omits the expected IDs.
+            context.Result = BadRequest(new
+            {
+                Message = "A competition or knockout match ID is required."
+            });
+            return;
+        }
+
+        await next();
     }
 
     // ==========================================
