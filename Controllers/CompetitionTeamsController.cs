@@ -1,10 +1,9 @@
-﻿
+﻿using System.Data;
 using System.Security.Claims;
-
 using ChampionsLeagueSimulatorAPI.Data;
 using ChampionsLeagueSimulatorAPI.DTOs;
 using ChampionsLeagueSimulatorAPI.Entities;
-
+using ChampionsLeagueSimulatorAPI.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -17,189 +16,156 @@ namespace ChampionsLeagueSimulatorAPI.Controllers;
 public class CompetitionTeamsController : ControllerBase
 {
     private readonly AppDbContext _context;
+    private readonly DrawService _drawService;
+    private readonly ILogger<CompetitionTeamsController> _logger;
 
-    public CompetitionTeamsController(AppDbContext context)
+    public CompetitionTeamsController(
+        AppDbContext context,
+        DrawService drawService,
+        ILogger<CompetitionTeamsController> logger)
     {
         _context = context;
+        _drawService = drawService;
+        _logger = logger;
     }
-
-    // ==========================================
-    // AUTHENTICATED USER ID
-    // ==========================================
 
     private Guid? GetCurrentUserId()
     {
-        var value =
-            User.FindFirstValue(ClaimTypes.NameIdentifier)
+        var value = User.FindFirstValue(ClaimTypes.NameIdentifier)
             ?? User.FindFirstValue("sub");
-
-        return Guid.TryParse(value, out var userId)
-            ? userId
-            : null;
+        return Guid.TryParse(value, out var userId) ? userId : null;
     }
 
-    // ==========================================
-    // COMPETITION OWNERSHIP CHECK
-    // ==========================================
-
-    private async Task<bool> OwnsCompetitionAsync(
-        Guid competitionId,
-        Guid userId)
-    {
-        return await _context.Competitions
-            .AsNoTracking()
-            .AnyAsync(c =>
-                c.Id == competitionId &&
-                c.OwnerId == userId);
-    }
-
-    // ==========================================
-    // ADD TEAM TO OWN COMPETITION
-    // POST: api/CompetitionTeams
-    // ==========================================
+    private Task<bool> OwnsCompetitionAsync(Guid competitionId, Guid userId)
+        => _context.Competitions.AsNoTracking()
+            .AnyAsync(c => c.Id == competitionId && c.OwnerId == userId);
 
     [HttpPost]
     public async Task<IActionResult> AddTeam(
         [FromBody] AddCompetitionTeamRequest request)
     {
         var userId = GetCurrentUserId();
+        if (userId is null) return Unauthorized();
 
-        if (userId is null)
-            return Unauthorized();
-
-        if (request is null ||
-            request.CompetitionId == Guid.Empty ||
+        if (request is null || request.CompetitionId == Guid.Empty ||
             request.TeamId == Guid.Empty)
         {
             return BadRequest(new
             {
-                message =
-                    "A valid competition ID and team ID are required."
+                message = "A valid competition ID and team ID are required."
             });
         }
 
-        // Verify that this competition belongs
-        // to the authenticated user.
-        var competition = await _context.Competitions
-            .AsNoTracking()
-            .FirstOrDefaultAsync(c =>
-                c.Id == request.CompetitionId &&
-                c.OwnerId == userId.Value);
-
-        if (competition is null)
+        try
         {
-            return NotFound(new
-            {
-                message = "Competition not found."
-            });
-        }
+            // The registration and fixture inserts must succeed or fail together.
+            await using var transaction = await _context.Database
+                .BeginTransactionAsync(IsolationLevel.Serializable);
 
-        // A team must be either a shared default
-        // or a private team owned by this user.
-        var team = await _context.Teams
-            .AsNoTracking()
-            .FirstOrDefaultAsync(t =>
-                t.Id == request.TeamId &&
-                (t.IsDefault ||
-                 t.OwnerId == userId.Value));
+            var competition = await _context.Competitions
+                .AsNoTracking()
+                .FirstOrDefaultAsync(c => c.Id == request.CompetitionId &&
+                                          c.OwnerId == userId.Value);
+            if (competition is null)
+                return NotFound(new { message = "Competition not found." });
 
-        if (team is null)
-        {
-            return NotFound(new
-            {
-                message = "Team not found."
-            });
-        }
+            var team = await _context.Teams.AsNoTracking()
+                .FirstOrDefaultAsync(t => t.Id == request.TeamId &&
+                    (t.IsDefault || t.OwnerId == userId.Value));
+            if (team is null)
+                return NotFound(new { message = "Team not found." });
 
-        // Prevent duplicate registrations.
-        var exists = await _context.CompetitionTeams
-            .AnyAsync(ct =>
+            var exists = await _context.CompetitionTeams.AnyAsync(ct =>
                 ct.CompetitionId == request.CompetitionId &&
                 ct.TeamId == request.TeamId);
+            if (exists)
+                return Conflict(new
+                {
+                    message = "Team already exists in this competition."
+                });
 
-        if (exists)
+            _context.CompetitionTeams.Add(new CompetitionTeam
+            {
+                CompetitionId = request.CompetitionId,
+                TeamId = request.TeamId
+            });
+            await _context.SaveChangesAsync();
+
+            var count = await _context.CompetitionTeams
+                .Where(ct => ct.CompetitionId == request.CompetitionId)
+                .Select(ct => ct.TeamId)
+                .Distinct()
+                .CountAsync();
+
+            var generatedCount = 0;
+            if (count >= 2)
+            {
+                // DrawService must reuse CurrentTransaction instead of
+                // opening a nested transaction. See companion file.
+                var generated = await _drawService.GenerateLeagueFixtures(
+                    request.CompetitionId, userId.Value);
+                generatedCount = generated.Count;
+            }
+
+            await transaction.CommitAsync();
+
+            // Preserve the existing response shape used by Next.js.
+            return Ok(new CompetitionTeamResponse
+            {
+                CompetitionId = competition.Id,
+                CompetitionName = competition.Name,
+                TeamId = team.Id,
+                TeamName = team.Name
+            });
+        }
+        catch (InvalidOperationException ex)
         {
+            return Conflict(new { message = ex.Message });
+        }
+        catch (DbUpdateException ex)
+        {
+            _logger.LogWarning(ex,
+                "Registration conflict in competition {CompetitionId}",
+                request.CompetitionId);
             return Conflict(new
             {
-                message =
-                    "Team already exists in this competition."
+                message = "Unable to register this team. Refresh and try again."
             });
         }
-
-        var entry = new CompetitionTeam
+        catch (Exception ex)
         {
-            CompetitionId = request.CompetitionId,
-            TeamId = request.TeamId
-        };
-
-        _context.CompetitionTeams.Add(entry);
-
-        await _context.SaveChangesAsync();
-
-        // Preserve the original response DTO.
-        var response = new CompetitionTeamResponse
-        {
-            CompetitionId = competition.Id,
-            CompetitionName = competition.Name,
-            TeamId = team.Id,
-            TeamName = team.Name
-        };
-
-        return Ok(response);
+            _logger.LogError(ex,
+                "Registration and fixture generation failed for {CompetitionId}",
+                request.CompetitionId);
+            return StatusCode(500, new
+            {
+                message = "Unable to register the club and schedule fixtures. Please retry."
+            });
+        }
     }
 
-    // ==========================================
-    // GET TEAMS IN OWN COMPETITION
-    // GET: api/CompetitionTeams/{competitionId}
-    // ==========================================
-
     [HttpGet("{competitionId:guid}")]
-    public async Task<IActionResult> GetTeamsByCompetition(
-        Guid competitionId)
+    public async Task<IActionResult> GetTeamsByCompetition(Guid competitionId)
     {
         var userId = GetCurrentUserId();
+        if (userId is null) return Unauthorized();
+        if (!await OwnsCompetitionAsync(competitionId, userId.Value))
+            return NotFound(new { message = "Competition not found." });
 
-        if (userId is null)
-            return Unauthorized();
-
-        if (!await OwnsCompetitionAsync(
-                competitionId,
-                userId.Value))
-        {
-            return NotFound(new
-            {
-                message = "Competition not found."
-            });
-        }
-
-        var entries = await _context.CompetitionTeams
-            .AsNoTracking()
-            .Where(ct =>
-                ct.CompetitionId == competitionId)
+        var entries = await _context.CompetitionTeams.AsNoTracking()
+            .Where(ct => ct.CompetitionId == competitionId)
             .OrderBy(ct => ct.Team.Name)
             .Select(ct => new CompetitionTeamResponse
             {
                 CompetitionId = ct.CompetitionId,
-                CompetitionName =
-                    ct.Competition != null
-                        ? ct.Competition.Name
-                        : "",
+                CompetitionName = ct.Competition != null
+                    ? ct.Competition.Name : "",
                 TeamId = ct.TeamId,
-                TeamName =
-                    ct.Team != null
-                        ? ct.Team.Name
-                        : ""
+                TeamName = ct.Team != null ? ct.Team.Name : ""
             })
             .ToListAsync();
-
         return Ok(entries);
     }
-
-    // ==========================================
-    // REMOVE TEAM FROM OWN COMPETITION
-    // DELETE: api/CompetitionTeams
-    // ?competitionId={id}&teamId={id}
-    // ==========================================
 
     [HttpDelete]
     public async Task<IActionResult> RemoveTeam(
@@ -207,48 +173,39 @@ public class CompetitionTeamsController : ControllerBase
         [FromQuery] Guid teamId)
     {
         var userId = GetCurrentUserId();
-
-        if (userId is null)
-            return Unauthorized();
-
-        if (competitionId == Guid.Empty ||
-            teamId == Guid.Empty)
-        {
+        if (userId is null) return Unauthorized();
+        if (competitionId == Guid.Empty || teamId == Guid.Empty)
             return BadRequest(new
             {
-                message =
-                    "Valid competition and team IDs are required."
+                message = "Valid competition and team IDs are required."
             });
-        }
 
-        if (!await OwnsCompetitionAsync(
-                competitionId,
-                userId.Value))
-        {
-            return NotFound(new
-            {
-                message = "Competition not found."
-            });
-        }
+        if (!await OwnsCompetitionAsync(competitionId, userId.Value))
+            return NotFound(new { message = "Competition not found." });
 
-        var entry = await _context.CompetitionTeams
-            .FirstOrDefaultAsync(ct =>
-                ct.CompetitionId == competitionId &&
-                ct.TeamId == teamId);
+        await using var transaction = await _context.Database
+            .BeginTransactionAsync(IsolationLevel.Serializable);
 
+        var entry = await _context.CompetitionTeams.FirstOrDefaultAsync(ct =>
+            ct.CompetitionId == competitionId && ct.TeamId == teamId);
         if (entry is null)
-        {
             return NotFound(new
             {
-                message =
-                    "Team is not registered in this competition."
+                message = "Team is not registered in this competition."
             });
-        }
+
+        var hasFixtures = await _context.Matches.AnyAsync(m =>
+            m.CompetitionId == competitionId &&
+            (m.HomeTeamId == teamId || m.AwayTeamId == teamId));
+        if (hasFixtures)
+            return Conflict(new
+            {
+                message = "This club already has fixtures. Its registration cannot be removed without affecting the competition schedule."
+            });
 
         _context.CompetitionTeams.Remove(entry);
-
         await _context.SaveChangesAsync();
-
+        await transaction.CommitAsync();
         return NoContent();
     }
 }

@@ -1,21 +1,17 @@
 ﻿using System.Security.Claims;
-using Microsoft.AspNetCore.Http;
+using System.Data;
+
 using ChampionsLeagueSimulatorAPI.Data;
 using ChampionsLeagueSimulatorAPI.Entities;
-using Google.OrTools.Sat;
+
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
-using System.Data;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace ChampionsLeagueSimulatorAPI.Services;
 
 public class DrawService
 {
-    private const int RequiredTeams = 36;
-    private const int PotCount = 4;
-    private const int TeamsPerPot = 9;
-    private const int MatchdayCount = 8;
-    private const int RequiredFixtures = 144;
-
     private readonly AppDbContext _context;
     private readonly IHttpContextAccessor _httpContextAccessor;
 
@@ -27,387 +23,269 @@ public class DrawService
         _httpContextAccessor = httpContextAccessor;
     }
 
+    // ==========================================
+    // GET AUTHENTICATED USER ID
+    // ==========================================
+
     private Guid GetCurrentUserId()
     {
         var user = _httpContextAccessor.HttpContext?.User;
-        var claim = user?.FindFirstValue(ClaimTypes.NameIdentifier)
+
+        var value =
+            user?.FindFirstValue(ClaimTypes.NameIdentifier)
             ?? user?.FindFirstValue("sub");
 
         if (user?.Identity?.IsAuthenticated != true ||
-            !Guid.TryParse(claim, out var userId))
+            !Guid.TryParse(value, out var userId))
         {
             throw new UnauthorizedAccessException(
-                "Authentication is required to generate fixtures.");
+                "Authentication is required.");
         }
 
         return userId;
     }
 
-    private async Task VerifyOwnershipAsync(Guid competitionId, Guid userId)
+    // ==========================================
+    // VERIFY COMPETITION OWNERSHIP
+    // ==========================================
+
+    private async Task VerifyOwnershipAsync(
+        Guid competitionId,
+        Guid userId)
     {
         if (competitionId == Guid.Empty)
-            throw new ArgumentException("Invalid competition ID.", nameof(competitionId));
+        {
+            throw new ArgumentException(
+                "Invalid competition ID.",
+                nameof(competitionId));
+        }
 
         var ownsCompetition = await _context.Competitions
             .AsNoTracking()
-            .AnyAsync(c => c.Id == competitionId && c.OwnerId == userId);
+            .AnyAsync(c =>
+                c.Id == competitionId &&
+                c.OwnerId == userId);
 
         if (!ownsCompetition)
-            throw new KeyNotFoundException("Competition not found.");
+        {
+            throw new KeyNotFoundException(
+                "Competition not found.");
+        }
     }
 
-    // Compatibility overload: obtain the user from the validated HTTP identity.
-    public Task<List<Match>> GenerateLeagueFixtures(Guid competitionId)
-        => GenerateLeagueFixtures(competitionId, GetCurrentUserId());
+    // ==========================================
+    // GENERATE FIXTURES - COMPATIBILITY OVERLOAD
+    // ==========================================
 
-    // For trusted backend callers only. Never accept userId from a client request.
+    public Task<List<Match>> GenerateLeagueFixtures(
+        Guid competitionId)
+    {
+        return GenerateLeagueFixtures(
+            competitionId,
+            GetCurrentUserId());
+    }
+
+    // ==========================================
+    // DYNAMIC FIXTURE GENERATION
+    // ==========================================
+
     public async Task<List<Match>> GenerateLeagueFixtures(
         Guid competitionId,
         Guid userId)
     {
-        await VerifyOwnershipAsync(competitionId, userId);
+        await VerifyOwnershipAsync(
+            competitionId,
+            userId);
 
-        if (await _context.Matches.AnyAsync(
-            m => m.CompetitionId == competitionId))
+        // Reuse an existing transaction when this
+        // method is called during team registration.
+        // Otherwise, start a new transaction.
+
+        var ownsTransaction =
+            _context.Database.CurrentTransaction == null;
+
+        IDbContextTransaction? transaction = null;
+
+        if (ownsTransaction)
         {
-            throw new InvalidOperationException(
-                "This competition already has fixtures. " +
-                "Existing matches have not been changed.");
+            transaction =
+                await _context.Database.BeginTransactionAsync(
+                    IsolationLevel.Serializable);
         }
 
-        var teams = await _context.CompetitionTeams
-            .Where(ct => ct.CompetitionId == competitionId)
-            .Select(ct => ct.Team)
-            .AsNoTracking()
-            .ToListAsync();
-
-        if (teams.Count != RequiredTeams ||
-            teams.Select(t => t.Id).Distinct().Count() != RequiredTeams)
+        try
         {
-            throw new InvalidOperationException(
-                "Exactly 36 unique clubs must be registered.");
-        }
+            // ==========================================
+            // GET REGISTERED TEAMS
+            // ==========================================
 
-        if (teams.Any(t =>
-            string.IsNullOrWhiteSpace(t.Name) ||
-            string.IsNullOrWhiteSpace(t.Country)))
-        {
-            throw new InvalidOperationException(
-                "Every club must have a name and country.");
-        }
+            var teams = await _context.CompetitionTeams
+                .AsNoTracking()
+                .Where(ct =>
+                    ct.CompetitionId == competitionId)
+                .Select(ct => ct.Team)
+                .OrderBy(t => t.Name)
+                .ToListAsync();
 
-        // Assign coefficient-based pots.
-        teams = teams
-            .OrderByDescending(t => t.Coefficient)
-            .ThenBy(t => t.Name)
-            .ToList();
-
-        var pots = Enumerable.Range(0, RequiredTeams)
-            .Select(i => i / TeamsPerPot)
-            .ToArray();
-
-        var countries = teams
-            .Select(t => t.Country.Trim().ToUpperInvariant())
-            .ToArray();
-
-        var model = new CpModel();
-
-        // Key: (matchday, home team index, away team index)
-        var variables = new Dictionary<
-            (int Day, int Home, int Away), BoolVar>();
-
-        for (int day = 0; day < MatchdayCount; day++)
-        {
-            for (int home = 0; home < RequiredTeams; home++)
+            // A minimum of two teams is required.
+            if (teams.Count < 2)
             {
-                for (int away = 0; away < RequiredTeams; away++)
+                if (transaction != null)
                 {
-                    if (home == away)
-                        continue;
+                    await transaction.CommitAsync();
+                }
 
-                    // No same-country opponents.
-                    if (countries[home] == countries[away])
-                        continue;
+                return new List<Match>();
+            }
 
-                    variables[(day, home, away)] =
-                        model.NewBoolVar($"m_{day}_{home}_{away}");
+            // ==========================================
+            // GET EXISTING MATCHES
+            // ==========================================
+
+            var existingMatches = await _context.Matches
+                .AsNoTracking()
+                .Where(m =>
+                    m.CompetitionId == competitionId)
+                .ToListAsync();
+
+            // Store existing pairs in a HashSet.
+            // Home/Away order does not matter.
+            var existingPairs = new HashSet<
+                (Guid First, Guid Second)>();
+
+            foreach (var match in existingMatches)
+            {
+                existingPairs.Add(
+                    NormalizePair(
+                        match.HomeTeamId,
+                        match.AwayTeamId));
+            }
+
+            // ==========================================
+            // DETERMINE NEXT MATCHDAY
+            // ==========================================
+
+            int nextMatchday = existingMatches.Count == 0
+                ? 1
+                : existingMatches.Max(m => m.MatchDay) + 1;
+
+            var fixtures = new List<Match>();
+
+            // ==========================================
+            // GENERATE ONLY MISSING PAIRINGS
+            // ==========================================
+
+            for (int i = 0; i < teams.Count; i++)
+            {
+                for (int j = i + 1; j < teams.Count; j++)
+                {
+                    var firstTeam = teams[i];
+                    var secondTeam = teams[j];
+
+                    var pair = NormalizePair(
+                        firstTeam.Id,
+                        secondTeam.Id);
+
+                    // Skip previously scheduled matches.
+                    if (existingPairs.Contains(pair))
+                    {
+                        continue;
+                    }
+
+                    // Randomize home and away clubs.
+                    bool firstTeamHome =
+                        Random.Shared.Next(2) == 0;
+
+                    var homeTeamId = firstTeamHome
+                        ? firstTeam.Id
+                        : secondTeam.Id;
+
+                    var awayTeamId = firstTeamHome
+                        ? secondTeam.Id
+                        : firstTeam.Id;
+
+                    fixtures.Add(new Match
+                    {
+                        Id = Guid.NewGuid(),
+
+                        CompetitionId = competitionId,
+
+                        HomeTeamId = homeTeamId,
+                        AwayTeamId = awayTeamId,
+
+                        MatchDay = nextMatchday,
+
+                        KickoffUtc = null,
+
+                        HomeScore = null,
+                        AwayScore = null,
+
+                        IsPlayed = false
+                    });
+
+                    existingPairs.Add(pair);
+
+                    // Allocate a separate matchday.
+                    nextMatchday++;
                 }
             }
-        }
 
-        // Each club plays exactly once per matchday.
-        for (int day = 0; day < MatchdayCount; day++)
-        {
-            for (int team = 0; team < RequiredTeams; team++)
+            // ==========================================
+            // SAVE NEW FIXTURES
+            // ==========================================
+
+            if (fixtures.Count > 0)
             {
-                var participation = variables
-                    .Where(v =>
-                        v.Key.Day == day &&
-                        (v.Key.Home == team ||
-                         v.Key.Away == team))
-                    .Select(v => v.Value)
-                    .ToArray();
+                _context.Matches.AddRange(fixtures);
 
-                model.Add(LinearExpr.Sum(participation) == 1);
+                await _context.SaveChangesAsync();
+            }
+
+            if (transaction != null)
+            {
+                await transaction.CommitAsync();
+            }
+
+            return fixtures;
+        }
+        catch
+        {
+            if (transaction != null)
+            {
+                await transaction.RollbackAsync();
+            }
+
+            throw;
+        }
+        finally
+        {
+            if (transaction != null)
+            {
+                await transaction.DisposeAsync();
             }
         }
-
-        // Each pair of clubs may meet at most once.
-        for (int a = 0; a < RequiredTeams; a++)
-        {
-            for (int b = a + 1; b < RequiredTeams; b++)
-            {
-                var pairMatches = variables
-                    .Where(v =>
-                        (v.Key.Home == a && v.Key.Away == b) ||
-                        (v.Key.Home == b && v.Key.Away == a))
-                    .Select(v => v.Value)
-                    .ToArray();
-
-                model.Add(LinearExpr.Sum(pairMatches) <= 1);
-            }
-        }
-
-        // One home and one away opponent from each pot.
-        for (int team = 0; team < RequiredTeams; team++)
-        {
-            for (int pot = 0; pot < PotCount; pot++)
-            {
-                int currentTeam = team;
-                int currentPot = pot;
-
-                var homeGames = variables
-                    .Where(v =>
-                        v.Key.Home == currentTeam &&
-                        pots[v.Key.Away] == currentPot)
-                    .Select(v => v.Value)
-                    .ToArray();
-
-                var awayGames = variables
-                    .Where(v =>
-                        v.Key.Away == currentTeam &&
-                        pots[v.Key.Home] == currentPot)
-                    .Select(v => v.Value)
-                    .ToArray();
-
-                model.Add(LinearExpr.Sum(homeGames) == 1);
-                model.Add(LinearExpr.Sum(awayGames) == 1);
-            }
-        }
-
-        // No more than two opponents from any other country.
-        var distinctCountries = countries.Distinct().ToArray();
-
-        for (int team = 0; team < RequiredTeams; team++)
-        {
-            foreach (var country in distinctCountries)
-            {
-                if (country == countries[team])
-                    continue;
-
-                int currentTeam = team;
-                string currentCountry = country;
-
-                var games = variables
-                    .Where(v =>
-                        (v.Key.Home == currentTeam &&
-                         countries[v.Key.Away] == currentCountry) ||
-                        (v.Key.Away == currentTeam &&
-                         countries[v.Key.Home] == currentCountry))
-                    .Select(v => v.Value)
-                    .ToArray();
-
-                model.Add(LinearExpr.Sum(games) <= 2);
-            }
-        }
-
-        var solver = new CpSolver
-        {
-            StringParameters =
-                "max_time_in_seconds:60 " +
-                "num_search_workers:8 " +
-                $"random_seed:{Random.Shared.Next(1, 1000000)} " +
-                "randomize_search:true"
-        };
-
-        // A time limit prevents Swagger from waiting indefinitely.
-        var status = solver.Solve(model);
-
-        if (status != CpSolverStatus.Optimal &&
-            status != CpSolverStatus.Feasible)
-        {
-            throw new InvalidOperationException(
-                $"The random draw did not complete. Solver status: {status}. " +
-                "No matches were saved. Try again or review the club restrictions.");
-        }
-
-        var fixtures = new List<Match>();
-
-        foreach (var entry in variables)
-        {
-            if (solver.Value(entry.Value) != 1)
-                continue;
-
-            fixtures.Add(new Match
-            {
-                Id = Guid.NewGuid(),
-                CompetitionId = competitionId,
-                HomeTeamId = teams[entry.Key.Home].Id,
-                AwayTeamId = teams[entry.Key.Away].Id,
-                MatchDay = entry.Key.Day + 1,
-                KickoffUtc = null,
-                HomeScore = null,
-                AwayScore = null,
-                IsPlayed = false
-            });
-        }
-
-        ValidateDraw(fixtures, teams, pots, countries);
-
-        // Begin a serializable transaction before checking again.
-        // This protects against concurrent requests creating two draws.
-        await using var transaction =
-            await _context.Database.BeginTransactionAsync(
-                IsolationLevel.Serializable);
-
-        // Recheck ownership inside the transaction, immediately before writing.
-        await VerifyOwnershipAsync(competitionId, userId);
-
-        if (await _context.Matches.AnyAsync(
-            m => m.CompetitionId == competitionId))
-        {
-            throw new InvalidOperationException(
-                "Fixtures were created by another request. " +
-                "No additional matches were saved.");
-        }
-
-        _context.Matches.AddRange(fixtures);
-        await _context.SaveChangesAsync();
-        await transaction.CommitAsync();
-
-        return fixtures;
     }
 
-    // Compatibility with existing callers.
+    // ==========================================
+    // NORMALIZE TEAM PAIR
+    // ==========================================
+
+    private static (Guid First, Guid Second) NormalizePair(
+        Guid teamA,
+        Guid teamB)
+    {
+        return teamA.CompareTo(teamB) < 0
+            ? (teamA, teamB)
+            : (teamB, teamA);
+    }
+
+    // ==========================================
+    // BACKWARD COMPATIBILITY
+    // ==========================================
+
     public Task<List<Match>> GenerateDoubleRoundRobin(
         Guid competitionId)
     {
         return GenerateLeagueFixtures(competitionId);
-    }
-
-    private static void ValidateDraw(
-        List<Match> fixtures,
-        List<Team> teams,
-        int[] pots,
-        string[] countries)
-    {
-        if (fixtures.Count != RequiredFixtures)
-            throw new InvalidOperationException(
-                "Invalid draw: expected 144 fixtures.");
-
-        var teamIndex = teams
-            .Select((team, index) => new { team.Id, index })
-            .ToDictionary(x => x.Id, x => x.index);
-
-        var uniquePairs = new HashSet<string>();
-
-        foreach (var match in fixtures)
-        {
-            if (!teamIndex.TryGetValue(
-                    match.HomeTeamId, out var home) ||
-                !teamIndex.TryGetValue(
-                    match.AwayTeamId, out var away))
-            {
-                throw new InvalidOperationException(
-                    "Invalid draw: unknown club.");
-            }
-
-            if (home == away || countries[home] == countries[away])
-                throw new InvalidOperationException(
-                    "Invalid draw: prohibited opponent.");
-
-            var pair = home < away
-                ? $"{home}:{away}"
-                : $"{away}:{home}";
-
-            if (!uniquePairs.Add(pair))
-                throw new InvalidOperationException(
-                    "Invalid draw: repeated opponents.");
-        }
-
-        for (int day = 1; day <= MatchdayCount; day++)
-        {
-            var round = fixtures
-                .Where(m => m.MatchDay == day)
-                .ToList();
-
-            var participants = round
-                .SelectMany(m => new[]
-                {
-                    m.HomeTeamId,
-                    m.AwayTeamId
-                })
-                .ToList();
-
-            if (round.Count != 18 ||
-                participants.Distinct().Count() != RequiredTeams)
-            {
-                throw new InvalidOperationException(
-                    $"Invalid draw: matchday {day}.");
-            }
-        }
-
-        for (int team = 0; team < RequiredTeams; team++)
-        {
-            var teamId = teams[team].Id;
-
-            var games = fixtures
-                .Where(m =>
-                    m.HomeTeamId == teamId ||
-                    m.AwayTeamId == teamId)
-                .ToList();
-
-            if (games.Count != 8 ||
-                games.Count(m => m.HomeTeamId == teamId) != 4 ||
-                games.Count(m => m.AwayTeamId == teamId) != 4)
-            {
-                throw new InvalidOperationException(
-                    $"Invalid match balance for {teams[team].Name}.");
-            }
-
-            foreach (int pot in Enumerable.Range(0, PotCount))
-            {
-                int homeCount = games.Count(m =>
-                    m.HomeTeamId == teamId &&
-                    pots[teamIndex[m.AwayTeamId]] == pot);
-
-                int awayCount = games.Count(m =>
-                    m.AwayTeamId == teamId &&
-                    pots[teamIndex[m.HomeTeamId]] == pot);
-
-                if (homeCount != 1 || awayCount != 1)
-                {
-                    throw new InvalidOperationException(
-                        $"Invalid pot allocation for {teams[team].Name}.");
-                }
-            }
-
-            var opponentsByCountry = games
-                .Select(m =>
-                {
-                    var opponentId = m.HomeTeamId == teamId
-                        ? m.AwayTeamId
-                        : m.HomeTeamId;
-
-                    return countries[teamIndex[opponentId]];
-                })
-                .GroupBy(c => c);
-
-            if (opponentsByCountry.Any(g => g.Count() > 2))
-            {
-                throw new InvalidOperationException(
-                    $"Country limit exceeded for {teams[team].Name}.");
-            }
-        }
     }
 }
