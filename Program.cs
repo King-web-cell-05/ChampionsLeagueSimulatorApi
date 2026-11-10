@@ -15,6 +15,23 @@ using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
+if (app.Environment.IsDevelopment())
+{
+    using var scope = app.Services.CreateScope();
+
+    var db = scope.ServiceProvider
+        .GetRequiredService<AppDbContext>();
+
+    var updated =
+        await TeamLogoSeeder.UpdateMissingLogosAsync(db);
+
+    app.Logger.LogInformation(
+        "FootballSim: Updated {Count} team logos.",
+        updated
+    );
+}
+
+
 // ==========================================
 // DATABASE CONNECTION
 // ==========================================
