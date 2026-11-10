@@ -1,4 +1,5 @@
-﻿namespace ChampionsLeagueSimulatorAPI.Entities;
+﻿
+namespace ChampionsLeagueSimulatorAPI.Entities;
 
 public class Team
 {
@@ -9,4 +10,7 @@ public class Team
     public string Country { get; set; } = string.Empty;
 
     public decimal Coefficient { get; set; }
+
+    // Optional club crest URL
+    public string? LogoUrl { get; set; }
 }

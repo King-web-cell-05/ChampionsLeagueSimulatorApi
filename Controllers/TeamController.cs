@@ -30,10 +30,29 @@ public class TeamsController : ControllerBase
         return Ok(teams);
     }
 
+    // GET: api/Teams/{id}
+    [HttpGet("{id:guid}")]
+    public async Task<IActionResult> GetTeam(Guid id)
+    {
+        var team = await _context.Teams
+            .AsNoTracking()
+            .FirstOrDefaultAsync(t => t.Id == id);
+
+        if (team is null)
+        {
+            return NotFound(new
+            {
+                message = "Team not found."
+            });
+        }
+
+        return Ok(team);
+    }
+
     // POST: api/Teams
     [HttpPost]
     public async Task<IActionResult> CreateTeam(
-        CreateTeamRequest request)
+        [FromBody] CreateTeamRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.Name) ||
             string.IsNullOrWhiteSpace(request.Country))
@@ -44,11 +63,20 @@ public class TeamsController : ControllerBase
             });
         }
 
+        if (!IsValidLogoUrl(request.LogoUrl))
+        {
+            return BadRequest(new
+            {
+                message = "Logo URL must be a valid HTTPS URL."
+            });
+        }
+
         var name = request.Name.Trim();
         var country = request.Country.Trim();
 
         var duplicateExists = await _context.Teams
-            .AnyAsync(t => t.Name.ToLower() == name.ToLower());
+            .AnyAsync(t =>
+                t.Name.ToLower() == name.ToLower());
 
         if (duplicateExists)
         {
@@ -63,20 +91,26 @@ public class TeamsController : ControllerBase
             Id = Guid.NewGuid(),
             Name = name,
             Country = country,
-            Coefficient = request.Coefficient
+            Coefficient = request.Coefficient,
+            LogoUrl = NormalizeLogoUrl(request.LogoUrl)
         };
 
         _context.Teams.Add(team);
+
         await _context.SaveChangesAsync();
 
-        return Created("/api/Teams", team);
+        return CreatedAtAction(
+            nameof(GetTeam),
+            new { id = team.Id },
+            team
+        );
     }
 
     // PUT: api/Teams/{id}
     [HttpPut("{id:guid}")]
     public async Task<IActionResult> UpdateTeam(
         Guid id,
-        CreateTeamRequest request)
+        [FromBody] CreateTeamRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.Name) ||
             string.IsNullOrWhiteSpace(request.Country))
@@ -84,6 +118,14 @@ public class TeamsController : ControllerBase
             return BadRequest(new
             {
                 message = "Team name and country are required."
+            });
+        }
+
+        if (!IsValidLogoUrl(request.LogoUrl))
+        {
+            return BadRequest(new
+            {
+                message = "Logo URL must be a valid HTTPS URL."
             });
         }
 
@@ -117,9 +159,33 @@ public class TeamsController : ControllerBase
         team.Name = name;
         team.Country = country;
         team.Coefficient = request.Coefficient;
+        team.LogoUrl = NormalizeLogoUrl(request.LogoUrl);
 
         await _context.SaveChangesAsync();
 
         return Ok(team);
+    }
+
+    // Validates optional logo URLs.
+    private static bool IsValidLogoUrl(string? logoUrl)
+    {
+        if (string.IsNullOrWhiteSpace(logoUrl))
+        {
+            return true;
+        }
+
+        return Uri.TryCreate(
+            logoUrl.Trim(),
+            UriKind.Absolute,
+            out var uri
+        ) && uri.Scheme == Uri.UriSchemeHttps;
+    }
+
+    private static string? NormalizeLogoUrl(
+        string? logoUrl)
+    {
+        return string.IsNullOrWhiteSpace(logoUrl)
+            ? null
+            : logoUrl.Trim();
     }
 }
