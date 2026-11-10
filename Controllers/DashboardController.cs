@@ -1,4 +1,5 @@
-﻿using System.Security.Claims;
+﻿
+using System.Security.Claims;
 using ChampionsLeagueSimulatorAPI.Data;
 using ChampionsLeagueSimulatorAPI.Entities;
 using Microsoft.AspNetCore.Authorization;
@@ -24,7 +25,9 @@ public class DashboardController : ControllerBase
         var rawId = User.FindFirstValue(ClaimTypes.NameIdentifier)
             ?? User.FindFirstValue("sub");
 
-        return Guid.TryParse(rawId, out var userId) ? userId : null;
+        return Guid.TryParse(rawId, out var userId)
+            ? userId
+            : null;
     }
 
     // ==========================================
@@ -36,10 +39,21 @@ public class DashboardController : ControllerBase
     public async Task<IActionResult> GetSummary()
     {
         var userId = GetCurrentUserId();
+
         if (userId is null)
-            return Unauthorized(new { message = "A valid user ID is required." });
+        {
+            return Unauthorized(new
+            {
+                message = "A valid user ID is required."
+            });
+        }
+
+        // ======================================
+        // 1. USER COMPETITIONS
+        // ======================================
 
         var totalCompetitions = await _context.Competitions
+            .AsNoTracking()
             .CountAsync(c => c.OwnerId == userId.Value);
 
         var activeCompetition = await _context.Competitions
@@ -48,22 +62,37 @@ public class DashboardController : ControllerBase
             .OrderByDescending(c => c.CreatedDate)
             .FirstOrDefaultAsync();
 
-        int registeredTeams;
+        // ======================================
+        // 2. AVAILABLE CLUBS
+        // Default clubs + user's custom clubs
+        // ======================================
 
-        if (activeCompetition is not null)
-        {
-            registeredTeams = await _context.CompetitionTeams
+        var registeredTeams = await _context.Teams
+            .AsNoTracking()
+            .CountAsync(t =>
+                t.IsDefault ||
+                t.OwnerId == userId.Value);
+
+        // ======================================
+        // 3. ACTIVE COMPETITION TEAMS
+        // Only participating clubs
+        // ======================================
+
+        var competitionTeams = activeCompetition is null
+            ? 0
+            : await _context.CompetitionTeams
+                .AsNoTracking()
                 .CountAsync(ct =>
                     ct.CompetitionId == activeCompetition.Id);
-        }
-        else
-        {
-            registeredTeams = await _context.Teams.CountAsync(t => t.IsDefault || t.OwnerId == userId.Value);
-        }
+
+        // ======================================
+        // 4. USER MATCHES
+        // ======================================
 
         IQueryable<Match> matchesQuery = _context.Matches
             .AsNoTracking()
-            .Where(m => m.Competition.OwnerId == userId.Value);
+            .Where(m =>
+                m.Competition.OwnerId == userId.Value);
 
         if (activeCompetition is not null)
         {
@@ -83,12 +112,19 @@ public class DashboardController : ControllerBase
         var goalsScored = await matchesQuery
             .Where(m => m.IsPlayed)
             .SumAsync(m =>
-                (int?)((m.HomeScore ?? 0) +
-                       (m.AwayScore ?? 0))) ?? 0;
+                (int?)(
+                    (m.HomeScore ?? 0) +
+                    (m.AwayScore ?? 0)
+                )
+            ) ?? 0;
 
         var currentMatchday = await matchesQuery
             .Where(m => m.IsPlayed)
             .MaxAsync(m => (int?)m.MatchDay) ?? 0;
+
+        // ======================================
+        // 5. UPCOMING FIXTURES
+        // ======================================
 
         var upcomingFixtures = await matchesQuery
             .Where(m => !m.IsPlayed)
@@ -108,12 +144,22 @@ public class DashboardController : ControllerBase
             })
             .ToListAsync();
 
+        // ======================================
+        // 6. DASHBOARD RESPONSE
+        // ======================================
+
         return Ok(new
         {
             generatedAtUtc = DateTime.UtcNow,
 
             totalCompetitions,
+
+            // All clubs accessible to this user
             registeredTeams,
+
+            // Clubs in the latest competition
+            competitionTeams,
+
             totalMatches,
             matchesPlayed,
             goalsScored,
@@ -151,18 +197,30 @@ public class DashboardController : ControllerBase
         }
 
         // ======================================
-        // 1. COMPETITION DETAILS
+        // 1. AUTHENTICATED USER
         // ======================================
 
         var userId = GetCurrentUserId();
+
         if (userId is null)
-            return Unauthorized(new { message = "A valid user ID is required." });
+        {
+            return Unauthorized(new
+            {
+                message = "A valid user ID is required."
+            });
+        }
+
+        // ======================================
+        // 2. COMPETITION DETAILS
+        // ======================================
 
         var competition = await _context.Competitions
             .AsNoTracking()
-            .FirstOrDefaultAsync(c => c.Id == competitionId && c.OwnerId == userId.Value);
+            .FirstOrDefaultAsync(c =>
+                c.Id == competitionId &&
+                c.OwnerId == userId.Value);
 
-        if (competition == null)
+        if (competition is null)
         {
             return NotFound(new
             {
@@ -171,7 +229,7 @@ public class DashboardController : ControllerBase
         }
 
         // ======================================
-        // 2. REGISTERED TEAMS
+        // 3. REGISTERED COMPETITION TEAMS
         // ======================================
 
         var registeredTeams = await _context.CompetitionTeams
@@ -180,12 +238,13 @@ public class DashboardController : ControllerBase
                 ct.CompetitionId == competitionId);
 
         // ======================================
-        // 3. LEAGUE-PHASE STATISTICS
+        // 4. LEAGUE-PHASE STATISTICS
         // ======================================
 
         var matchesQuery = _context.Matches
             .AsNoTracking()
-            .Where(m => m.CompetitionId == competitionId);
+            .Where(m =>
+                m.CompetitionId == competitionId);
 
         var totalMatches = await matchesQuery.CountAsync();
 
@@ -198,8 +257,11 @@ public class DashboardController : ControllerBase
         var totalGoals = await matchesQuery
             .Where(m => m.IsPlayed)
             .SumAsync(m =>
-                (int?)((m.HomeScore ?? 0) +
-                       (m.AwayScore ?? 0))) ?? 0;
+                (int?)(
+                    (m.HomeScore ?? 0) +
+                    (m.AwayScore ?? 0)
+                )
+            ) ?? 0;
 
         var currentMatchday = await matchesQuery
             .Where(m => m.IsPlayed)
@@ -211,7 +273,8 @@ public class DashboardController : ControllerBase
         double leagueProgress = totalMatches > 0
             ? Math.Round(
                 matchesPlayed * 100.0 / totalMatches,
-                2)
+                2
+            )
             : 0;
 
         bool leagueCompleted =
@@ -219,7 +282,7 @@ public class DashboardController : ControllerBase
             matchesPlayed == totalMatches;
 
         // ======================================
-        // 4. UPCOMING LEAGUE FIXTURES
+        // 5. UPCOMING LEAGUE FIXTURES
         // ======================================
 
         var upcomingFixtures = await matchesQuery
@@ -240,7 +303,7 @@ public class DashboardController : ControllerBase
             .ToListAsync();
 
         // ======================================
-        // 5. RECENT LEAGUE RESULTS
+        // 6. RECENT LEAGUE RESULTS
         // ======================================
 
         var recentResults = await matchesQuery
@@ -261,19 +324,21 @@ public class DashboardController : ControllerBase
             .ToListAsync();
 
         // ======================================
-        // 6. KNOCKOUT ROUND PROGRESS
+        // 7. KNOCKOUT ROUND PROGRESS
         // ======================================
 
         var knockoutTies = await _context.KnockoutTies
             .AsNoTracking()
-            .Where(t => t.CompetitionId == competitionId)
+            .Where(t =>
+                t.CompetitionId == competitionId)
             .Select(t => new
             {
                 t.Round,
                 t.IsCompleted,
                 t.WinnerTeamId,
                 MatchCount = t.Matches.Count,
-                PlayedMatches = t.Matches.Count(m => m.IsPlayed)
+                PlayedMatches = t.Matches.Count(m =>
+                    m.IsPlayed)
             })
             .ToListAsync();
 
@@ -322,11 +387,11 @@ public class DashboardController : ControllerBase
                     t.IsCompleted &&
                     t.WinnerTeamId.HasValue);
 
-                int totalRoundMatches =
-                    ties.Sum(t => t.MatchCount);
+                int totalRoundMatches = ties.Sum(t =>
+                    t.MatchCount);
 
-                int playedRoundMatches =
-                    ties.Sum(t => t.PlayedMatches);
+                int playedRoundMatches = ties.Sum(t =>
+                    t.PlayedMatches);
 
                 bool isCompleted =
                     ties.Count == r.expectedTies &&
@@ -359,7 +424,7 @@ public class DashboardController : ControllerBase
             .ToList();
 
         // ======================================
-        // 7. CHAMPIONSHIP FINAL
+        // 8. CHAMPIONSHIP FINAL
         // ======================================
 
         var finalTie = await _context.KnockoutTies
@@ -450,7 +515,7 @@ public class DashboardController : ControllerBase
         }
 
         // ======================================
-        // 8. COMPETITION STATUS
+        // 9. COMPETITION STATUS
         // ======================================
 
         string competitionStatus;
@@ -481,7 +546,7 @@ public class DashboardController : ControllerBase
         }
 
         // ======================================
-        // 9. COMPLETE OVERVIEW RESPONSE
+        // 10. COMPLETE OVERVIEW RESPONSE
         // ======================================
 
         return Ok(new
