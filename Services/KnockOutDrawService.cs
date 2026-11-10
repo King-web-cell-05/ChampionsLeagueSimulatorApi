@@ -1,5 +1,7 @@
 ﻿
 using System.Data;
+using System.Security.Claims;
+using Microsoft.AspNetCore.Http;
 using ChampionsLeagueSimulatorAPI.Data;
 using ChampionsLeagueSimulatorAPI.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -10,13 +12,44 @@ public class KnockoutDrawService
 {
     private readonly AppDbContext _context;
     private readonly TableService _tableService;
+    private readonly IHttpContextAccessor _httpContextAccessor;
 
     public KnockoutDrawService(
         AppDbContext context,
-        TableService tableService)
+        TableService tableService,
+        IHttpContextAccessor httpContextAccessor)
     {
         _context = context;
         _tableService = tableService;
+        _httpContextAccessor = httpContextAccessor;
+    }
+
+    private Guid GetCurrentUserId()
+    {
+        var principal = _httpContextAccessor.HttpContext?.User;
+        var value = principal?.FindFirstValue(ClaimTypes.NameIdentifier)
+                    ?? principal?.FindFirstValue("sub");
+
+        if (principal?.Identity?.IsAuthenticated != true ||
+            !Guid.TryParse(value, out var userId))
+        {
+            throw new UnauthorizedAccessException("Authentication is required.");
+        }
+
+        return userId;
+    }
+
+    private async Task VerifyOwnershipAsync(Guid competitionId, Guid userId)
+    {
+        if (competitionId == Guid.Empty)
+            throw new ArgumentException("Invalid competition ID.", nameof(competitionId));
+
+        bool owned = await _context.Competitions
+            .AsNoTracking()
+            .AnyAsync(c => c.Id == competitionId && c.OwnerId == userId);
+
+        if (!owned)
+            throw new KeyNotFoundException("Competition not found.");
     }
 
     // ==========================================
@@ -30,16 +63,13 @@ public class KnockoutDrawService
             throw new ArgumentException(
                 "Invalid competition ID.");
 
+        var userId = GetCurrentUserId();
+        await VerifyOwnershipAsync(competitionId, userId);
+
         await using var transaction =
-            await _context.Database.BeginTransactionAsync();
+            await _context.Database.BeginTransactionAsync(IsolationLevel.Serializable);
 
-        bool competitionExists =
-            await _context.Competitions
-                .AnyAsync(c => c.Id == competitionId);
-
-        if (!competitionExists)
-            throw new InvalidOperationException(
-                "Competition not found.");
+        await VerifyOwnershipAsync(competitionId, userId);
 
         bool drawExists = await _context.KnockoutTies
             .AnyAsync(t =>
@@ -134,6 +164,7 @@ public class KnockoutDrawService
 
         _context.KnockoutTies.AddRange(ties);
 
+        await VerifyOwnershipAsync(competitionId, userId);
         await _context.SaveChangesAsync();
         await transaction.CommitAsync();
 
@@ -151,17 +182,14 @@ public class KnockoutDrawService
             throw new ArgumentException(
                 "Invalid competition ID.");
 
+        var userId = GetCurrentUserId();
+        await VerifyOwnershipAsync(competitionId, userId);
+
         await using var transaction =
             await _context.Database.BeginTransactionAsync(
                 IsolationLevel.Serializable);
 
-        bool competitionExists =
-            await _context.Competitions
-                .AnyAsync(c => c.Id == competitionId);
-
-        if (!competitionExists)
-            throw new InvalidOperationException(
-                "Competition not found.");
+        await VerifyOwnershipAsync(competitionId, userId);
 
         // Prevent duplicate Round of 16 draws.
         bool drawExists = await _context.KnockoutTies
@@ -343,6 +371,7 @@ public class KnockoutDrawService
 
         _context.KnockoutTies.AddRange(roundOf16Ties);
 
+        await VerifyOwnershipAsync(competitionId, userId);
         await _context.SaveChangesAsync();
         await transaction.CommitAsync();
 
@@ -405,17 +434,15 @@ public class KnockoutDrawService
             throw new ArgumentException(
                 "Invalid competition ID.");
 
+        var userId = GetCurrentUserId();
+        await VerifyOwnershipAsync(competitionId, userId);
+
         await using var transaction =
             await _context.Database.BeginTransactionAsync(
                 System.Data.IsolationLevel.Serializable);
 
         // 1. Verify competition exists.
-        bool competitionExists = await _context.Competitions
-            .AnyAsync(c => c.Id == competitionId);
-
-        if (!competitionExists)
-            throw new ArgumentException(
-                "Competition not found.");
+        await VerifyOwnershipAsync(competitionId, userId);
 
         // 2. Prevent duplicate quarter-final draws.
         bool drawExists = await _context.KnockoutTies
@@ -508,6 +535,7 @@ public class KnockoutDrawService
         // 8. Save all four ties and their eight matches.
         _context.KnockoutTies.AddRange(quarterFinalTies);
 
+        await VerifyOwnershipAsync(competitionId, userId);
         await _context.SaveChangesAsync();
         await transaction.CommitAsync();
 
@@ -522,17 +550,15 @@ public class KnockoutDrawService
             throw new ArgumentException(
                 "Invalid competition ID.");
 
+        var userId = GetCurrentUserId();
+        await VerifyOwnershipAsync(competitionId, userId);
+
         await using var transaction =
             await _context.Database.BeginTransactionAsync(
                 System.Data.IsolationLevel.Serializable);
 
         // Verify the competition exists.
-        bool competitionExists = await _context.Competitions
-            .AnyAsync(c => c.Id == competitionId);
-
-        if (!competitionExists)
-            throw new ArgumentException(
-                "Competition not found.");
+        await VerifyOwnershipAsync(competitionId, userId);
 
         // Prevent duplicate semi-final draws.
         bool semiFinalExists = await _context.KnockoutTies
@@ -618,6 +644,7 @@ public class KnockoutDrawService
         // Save both semi-final ties and four matches.
         _context.KnockoutTies.AddRange(semiFinalTies);
 
+        await VerifyOwnershipAsync(competitionId, userId);
         await _context.SaveChangesAsync();
         await transaction.CommitAsync();
 
@@ -633,19 +660,15 @@ public class KnockoutDrawService
                 "Invalid competition ID.");
         }
 
+        var userId = GetCurrentUserId();
+        await VerifyOwnershipAsync(competitionId, userId);
+
         await using var transaction =
             await _context.Database.BeginTransactionAsync(
                 System.Data.IsolationLevel.Serializable);
 
         // Check that the competition exists.
-        bool competitionExists = await _context.Competitions
-            .AnyAsync(c => c.Id == competitionId);
-
-        if (!competitionExists)
-        {
-            throw new ArgumentException(
-                "Competition not found.");
-        }
+        await VerifyOwnershipAsync(competitionId, userId);
 
         // Prevent duplicate final generation.
         bool finalExists = await _context.KnockoutTies
@@ -731,6 +754,7 @@ public class KnockoutDrawService
 
         _context.KnockoutTies.Add(finalTie);
 
+        await VerifyOwnershipAsync(competitionId, userId);
         await _context.SaveChangesAsync();
         await transaction.CommitAsync();
 
