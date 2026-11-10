@@ -1,4 +1,6 @@
 ﻿
+using System.Security.Claims;
+
 using ChampionsLeagueSimulatorAPI.Data;
 using ChampionsLeagueSimulatorAPI.DTOs;
 using ChampionsLeagueSimulatorAPI.Entities;
@@ -10,6 +12,7 @@ using Microsoft.EntityFrameworkCore;
 namespace ChampionsLeagueSimulatorAPI.Controllers;
 
 [ApiController]
+[Authorize]
 [Route("api/[controller]")]
 public class TeamsController : ControllerBase
 {
@@ -36,32 +39,88 @@ public class TeamsController : ControllerBase
     }
 
     // ==========================================
-    // GET ALL TEAMS
+    // AUTHENTICATED USER ID
+    // ==========================================
+
+    private Guid? GetCurrentUserId()
+    {
+        var value = User.FindFirstValue(
+            ClaimTypes.NameIdentifier);
+
+        return Guid.TryParse(value, out var userId)
+            ? userId
+            : null;
+    }
+
+    // ==========================================
+    // SAFE TEAM RESPONSE
+    // ==========================================
+
+    private static object ToTeamResponse(Team team)
+    {
+        return new
+        {
+            team.Id,
+            team.Name,
+            team.Country,
+            team.Coefficient,
+            team.LogoUrl,
+            team.IsDefault
+        };
+    }
+
+    // ==========================================
+    // GET VISIBLE TEAMS
     // GET: api/Teams
     // ==========================================
 
     [HttpGet]
     public async Task<IActionResult> GetTeams()
     {
+        var userId = GetCurrentUserId();
+
+        if (userId is null)
+            return Unauthorized();
+
         var teams = await _context.Teams
             .AsNoTracking()
+            .Where(t =>
+                t.IsDefault ||
+                t.OwnerId == userId.Value)
             .OrderBy(t => t.Name)
+            .Select(t => new
+            {
+                t.Id,
+                t.Name,
+                t.Country,
+                t.Coefficient,
+                t.LogoUrl,
+                t.IsDefault
+            })
             .ToListAsync();
 
         return Ok(teams);
     }
 
     // ==========================================
-    // GET SINGLE TEAM
+    // GET SINGLE VISIBLE TEAM
     // GET: api/Teams/{id}
     // ==========================================
 
     [HttpGet("{id:guid}")]
     public async Task<IActionResult> GetTeam(Guid id)
     {
+        var userId = GetCurrentUserId();
+
+        if (userId is null)
+            return Unauthorized();
+
         var team = await _context.Teams
             .AsNoTracking()
-            .FirstOrDefaultAsync(t => t.Id == id);
+            .FirstOrDefaultAsync(t =>
+                t.Id == id &&
+                (t.IsDefault ||
+                 t.OwnerId == userId.Value));
 
         if (team is null)
         {
@@ -71,48 +130,52 @@ public class TeamsController : ControllerBase
             });
         }
 
-        return Ok(team);
+        return Ok(ToTeamResponse(team));
     }
 
     // ==========================================
-    // CREATE TEAM
+    // CREATE PRIVATE TEAM
     // POST: api/Teams
     // ==========================================
 
-    [Authorize]
     [HttpPost]
     public async Task<IActionResult> CreateTeam(
         [FromBody] CreateTeamRequest request)
     {
-        if (string.IsNullOrWhiteSpace(request.Name) ||
-            string.IsNullOrWhiteSpace(request.Country))
-        {
-            return BadRequest(new
-            {
-                message = "Team name and country are required."
-            });
-        }
+        var userId = GetCurrentUserId();
 
-        if (!IsValidLogoUrl(request.LogoUrl))
+        if (userId is null)
+            return Unauthorized();
+
+        var validationError = ValidateTeamRequest(request);
+
+        if (validationError is not null)
         {
             return BadRequest(new
             {
-                message = "Logo URL must be a valid HTTPS URL."
+                message = validationError
             });
         }
 
         var name = request.Name.Trim();
         var country = request.Country.Trim();
 
+        // A user cannot duplicate a shared default club
+        // or another club belonging to their own account.
+        // Other users' private club names are independent.
         var duplicateExists = await _context.Teams
             .AnyAsync(t =>
+                (t.IsDefault ||
+                 t.OwnerId == userId.Value) &&
                 t.Name.ToLower() == name.ToLower());
 
         if (duplicateExists)
         {
             return Conflict(new
             {
-                message = "A team with this name already exists."
+                message =
+                    "You already have a club with this name, " +
+                    "or it is a shared default club."
             });
         }
 
@@ -122,7 +185,13 @@ public class TeamsController : ControllerBase
             Name = name,
             Country = country,
             Coefficient = request.Coefficient,
-            LogoUrl = NormalizeLogoUrl(request.LogoUrl)
+            LogoUrl = NormalizeLogoUrl(request.LogoUrl),
+
+            // Always create private clubs.
+            IsDefault = false,
+
+            // Ownership comes from the validated JWT.
+            OwnerId = userId.Value
         };
 
         _context.Teams.Add(team);
@@ -132,46 +201,48 @@ public class TeamsController : ControllerBase
         return CreatedAtAction(
             nameof(GetTeam),
             new { id = team.Id },
-            team
-        );
+            ToTeamResponse(team));
     }
 
     // ==========================================
-    // UPDATE TEAM
+    // UPDATE OWN PRIVATE TEAM
     // PUT: api/Teams/{id}
     // ==========================================
 
-    [Authorize]
     [HttpPut("{id:guid}")]
     public async Task<IActionResult> UpdateTeam(
         Guid id,
         [FromBody] CreateTeamRequest request)
     {
-        if (string.IsNullOrWhiteSpace(request.Name) ||
-            string.IsNullOrWhiteSpace(request.Country))
+        var userId = GetCurrentUserId();
+
+        if (userId is null)
+            return Unauthorized();
+
+        var validationError = ValidateTeamRequest(request);
+
+        if (validationError is not null)
         {
             return BadRequest(new
             {
-                message = "Team name and country are required."
+                message = validationError
             });
         }
 
-        if (!IsValidLogoUrl(request.LogoUrl))
-        {
-            return BadRequest(new
-            {
-                message = "Logo URL must be a valid HTTPS URL."
-            });
-        }
-
+        // Never load another user's private team
+        // for modification.
         var team = await _context.Teams
-            .FirstOrDefaultAsync(t => t.Id == id);
+            .FirstOrDefaultAsync(t =>
+                t.Id == id &&
+                !t.IsDefault &&
+                t.OwnerId == userId.Value);
 
         if (team is null)
         {
             return NotFound(new
             {
-                message = "Team not found."
+                message =
+                    "Editable team not found."
             });
         }
 
@@ -181,13 +252,17 @@ public class TeamsController : ControllerBase
         var duplicateExists = await _context.Teams
             .AnyAsync(t =>
                 t.Id != id &&
+                (t.IsDefault ||
+                 t.OwnerId == userId.Value) &&
                 t.Name.ToLower() == name.ToLower());
 
         if (duplicateExists)
         {
             return Conflict(new
             {
-                message = "Another team already has this name."
+                message =
+                    "Another available club already " +
+                    "uses this name."
             });
         }
 
@@ -196,34 +271,44 @@ public class TeamsController : ControllerBase
         team.Coefficient = request.Coefficient;
         team.LogoUrl = NormalizeLogoUrl(request.LogoUrl);
 
+        // Do not modify OwnerId or IsDefault.
+
         await _context.SaveChangesAsync();
 
-        return Ok(team);
+        return Ok(ToTeamResponse(team));
     }
 
     // ==========================================
-    // UPLOAD TEAM LOGO
+    // UPLOAD PRIVATE TEAM LOGO
     // POST: api/Teams/{id}/logo
     // ==========================================
 
-
-    [Authorize]
     [HttpPost("{id:guid}/logo")]
     [Consumes("multipart/form-data")]
     [RequestSizeLimit(MaxLogoSize + 64 * 1024)]
     public async Task<IActionResult> UploadTeamLogo(
         Guid id,
         IFormFile file)
-
     {
+        var userId = GetCurrentUserId();
+
+        if (userId is null)
+            return Unauthorized();
+
+        // Only the owner may upload a crest.
+        // Shared default clubs are protected.
         var team = await _context.Teams
-            .FirstOrDefaultAsync(t => t.Id == id);
+            .FirstOrDefaultAsync(t =>
+                t.Id == id &&
+                !t.IsDefault &&
+                t.OwnerId == userId.Value);
 
         if (team is null)
         {
             return NotFound(new
             {
-                message = "Team not found."
+                message =
+                    "Editable team not found."
             });
         }
 
@@ -251,7 +336,8 @@ public class TeamsController : ControllerBase
         {
             return BadRequest(new
             {
-                message = "Only PNG, JPG, and WebP images are supported."
+                message =
+                    "Only PNG, JPG, and WebP images are supported."
             });
         }
 
@@ -262,11 +348,12 @@ public class TeamsController : ControllerBase
         {
             return BadRequest(new
             {
-                message = "Image file type does not match its extension."
+                message =
+                    "Image file type does not match its extension."
             });
         }
 
-        // Verify image signature, not just extension/MIME.
+        // Verify the image signature.
         await using (var stream = file.OpenReadStream())
         {
             var header = new byte[12];
@@ -281,7 +368,8 @@ public class TeamsController : ControllerBase
             {
                 return BadRequest(new
                 {
-                    message = "Invalid or unsupported image file."
+                    message =
+                        "Invalid or unsupported image file."
                 });
             }
         }
@@ -329,24 +417,33 @@ public class TeamsController : ControllerBase
         }
         catch
         {
-            System.IO.File.Delete(filePath);
+            if (System.IO.File.Exists(filePath))
+            {
+                System.IO.File.Delete(filePath);
+            }
+
             throw;
         }
 
-        // Remove the previous locally uploaded logo.
-        // Never delete an external URL.
+        // Remove an old local crest only after
+        // the new logo has been saved successfully.
         if (!string.IsNullOrWhiteSpace(oldLogoUrl) &&
             oldLogoUrl.StartsWith(
                 "/uploads/team-logos/",
                 StringComparison.Ordinal))
         {
-            var oldFilename = Path.GetFileName(oldLogoUrl);
+            var oldFilename =
+                Path.GetFileName(oldLogoUrl);
 
             var oldPath = Path.Combine(
                 uploadDirectory,
                 oldFilename);
 
-            if (System.IO.File.Exists(oldPath))
+            if (System.IO.File.Exists(oldPath) &&
+                !string.Equals(
+                    oldPath,
+                    filePath,
+                    StringComparison.OrdinalIgnoreCase))
             {
                 try
                 {
@@ -354,21 +451,60 @@ public class TeamsController : ControllerBase
                 }
                 catch (IOException)
                 {
-                    // Old file can be cleaned up later.
+                    // Cleanup can happen later.
                 }
                 catch (UnauthorizedAccessException)
                 {
-                    // Old file can be cleaned up later.
+                    // Cleanup can happen later.
                 }
             }
         }
 
         return Ok(new
         {
-            message = "Team logo uploaded successfully.",
+            message =
+                "Team logo uploaded successfully.",
             teamId = team.Id,
             logoUrl = logoPath
         });
+    }
+
+    // ==========================================
+    // VALIDATE TEAM INPUT
+    // ==========================================
+
+    private static string? ValidateTeamRequest(
+        CreateTeamRequest request)
+    {
+        if (request is null)
+            return "Team information is required.";
+
+        if (string.IsNullOrWhiteSpace(request.Name))
+            return "Team name is required.";
+
+        if (string.IsNullOrWhiteSpace(request.Country))
+            return "Country is required.";
+
+        if (request.Name.Trim().Length > 150)
+            return "Team name must not exceed 150 characters.";
+
+        if (request.Country.Trim().Length > 100)
+            return "Country must not exceed 100 characters.";
+
+        if (request.Coefficient < 0 ||
+            request.Coefficient > 200)
+        {
+            return "Coefficient must be between 0 and 200.";
+        }
+
+        if (!IsValidLogoUrl(request.LogoUrl))
+        {
+            return
+                "Logo URL must be a valid HTTPS URL " +
+                "or a supported local logo path.";
+        }
+
+        return null;
     }
 
     // ==========================================
@@ -424,20 +560,26 @@ public class TeamsController : ControllerBase
     private static bool IsValidLogoUrl(string? logoUrl)
     {
         if (string.IsNullOrWhiteSpace(logoUrl))
-        {
             return true;
-        }
 
-        // Allow our own uploaded logo paths.
-        if (logoUrl.StartsWith(
+        var value = logoUrl.Trim();
+
+        if (value.StartsWith(
                 "/uploads/team-logos/",
                 StringComparison.Ordinal))
         {
-            return true;
+            var filename = value[
+                "/uploads/team-logos/".Length..];
+
+            return !string.IsNullOrWhiteSpace(filename) &&
+                   filename == Path.GetFileName(filename) &&
+                   !filename.Contains('\\') &&
+                   ImageTypes.ContainsKey(
+                       Path.GetExtension(filename));
         }
 
         return Uri.TryCreate(
-            logoUrl.Trim(),
+            value,
             UriKind.Absolute,
             out var uri
         ) && uri.Scheme == Uri.UriSchemeHttps;
