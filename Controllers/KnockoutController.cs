@@ -37,6 +37,7 @@ public class KnockoutController : ControllerBase, IAsyncActionFilter
     // ==========================================
     // This filter runs before each public action, including actions
     // that delegate to the shared private helper methods.
+    [NonAction]
     public async Task OnActionExecutionAsync(
         ActionExecutingContext context,
         ActionExecutionDelegate next)
