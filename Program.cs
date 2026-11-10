@@ -81,8 +81,22 @@ builder.Services.AddHttpClient<BrevoEmailService>();
 // POSTGRESQL DATABASE
 // ==========================================
 
+// ==========================================
+// POSTGRESQL DATABASE
+// ==========================================
+
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(connectionString));
+{
+    options.UseNpgsql(
+        connectionString,
+        npgsqlOptions =>
+        {
+            npgsqlOptions.MigrationsAssembly(
+                typeof(AppDbContext).Assembly.GetName().Name
+            );
+        }
+    );
+});
 
 // ==========================================
 // PASSWORD HASHING
