@@ -12,7 +12,7 @@ public class AppDbContext : DbContext
     }
 
     // ==========================================
-    // EXISTING DATABASE TABLES
+    // DATABASE TABLES
     // ==========================================
 
     public DbSet<Team> Teams => Set<Team>();
@@ -55,8 +55,54 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<Team>(entity =>
         {
+            entity.HasKey(t => t.Id);
+
+            entity.Property(t => t.Name)
+                .IsRequired()
+                .HasMaxLength(150);
+
+            entity.Property(t => t.Country)
+                .IsRequired()
+                .HasMaxLength(100);
+
             entity.Property(t => t.Coefficient)
                 .HasPrecision(7, 3);
+
+            entity.Property(t => t.IsDefault)
+                .HasDefaultValue(false);
+
+            // Private club -> Owner
+            // Shared default clubs have no owner.
+            entity.HasOne(t => t.Owner)
+                .WithMany()
+                .HasForeignKey(t => t.OwnerId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            // Optimize private club lookups.
+            entity.HasIndex(t => t.OwnerId);
+
+            // Optimize default/private club filtering.
+            entity.HasIndex(t => new
+            {
+                t.IsDefault,
+                t.OwnerId
+            });
+
+            // Enforce valid club ownership:
+            // Default club: IsDefault = true,
+            //               OwnerId = null
+            //
+            // Private club: IsDefault = false,
+            //               OwnerId != null
+
+            entity.ToTable(table =>
+                table.HasCheckConstraint(
+                    "CK_Teams_Ownership",
+                    """
+                    ("IsDefault" = TRUE AND "OwnerId" IS NULL)
+                    OR
+                    ("IsDefault" = FALSE AND "OwnerId" IS NOT NULL)
+                    """));
         });
 
         // ======================================
@@ -65,8 +111,47 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<User>(entity =>
         {
+            entity.HasKey(u => u.Id);
+
             entity.HasIndex(u => u.Email)
                 .IsUnique();
+        });
+
+        // ======================================
+        // COMPETITION CONFIGURATION
+        // ======================================
+
+        modelBuilder.Entity<Competition>(entity =>
+        {
+            entity.HasKey(c => c.Id);
+
+            entity.Property(c => c.Name)
+                .IsRequired()
+                .HasMaxLength(150);
+
+            entity.Property(c => c.Season)
+                .IsRequired()
+                .HasMaxLength(30);
+
+            entity.Property(c => c.CreatedDate)
+                .HasColumnType(
+                    "timestamp with time zone");
+
+            // Competition -> Creator
+            entity.HasOne(c => c.Owner)
+                .WithMany()
+                .HasForeignKey(c => c.OwnerId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            // Optimize loading competitions
+            // belonging to the current user.
+            entity.HasIndex(c => c.OwnerId);
+
+            entity.HasIndex(c => new
+            {
+                c.OwnerId,
+                c.CreatedDate
+            });
         });
 
         // ======================================
@@ -76,7 +161,8 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<Match>(entity =>
         {
             entity.Property(m => m.KickoffUtc)
-                .HasColumnType("timestamp with time zone");
+                .HasColumnType(
+                    "timestamp with time zone");
 
             // Match -> Home Team
             entity.HasOne(m => m.HomeTeam)
@@ -103,7 +189,6 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<CompetitionTeam>(entity =>
         {
-            // Composite primary key
             entity.HasKey(ct => new
             {
                 ct.CompetitionId,
@@ -150,7 +235,6 @@ public class AppDbContext : DbContext
         {
             entity.HasKey(t => t.Id);
 
-            // Prevent duplicate ties within a round
             entity.HasIndex(t => new
             {
                 t.CompetitionId,
@@ -183,11 +267,10 @@ public class AppDbContext : DbContext
                 .HasForeignKey(t => t.WinnerTeamId)
                 .OnDelete(DeleteBehavior.Restrict);
 
-            // PostgreSQL UTC timestamp
             entity.Property(t => t.CreatedAtUtc)
-                .HasColumnType("timestamp with time zone");
+                .HasColumnType(
+                    "timestamp with time zone");
 
-            // Tie completion status
             entity.Property(t => t.IsCompleted)
                 .HasDefaultValue(false);
         });
@@ -200,7 +283,6 @@ public class AppDbContext : DbContext
         {
             entity.HasKey(m => m.Id);
 
-            // Prevent duplicate legs within a tie
             entity.HasIndex(m => new
             {
                 m.KnockoutTieId,
@@ -226,11 +308,10 @@ public class AppDbContext : DbContext
                 .HasForeignKey(m => m.AwayTeamId)
                 .OnDelete(DeleteBehavior.Restrict);
 
-            // PostgreSQL UTC timestamp
             entity.Property(m => m.KickoffUtc)
-                .HasColumnType("timestamp with time zone");
+                .HasColumnType(
+                    "timestamp with time zone");
 
-            // Match completion status
             entity.Property(m => m.IsPlayed)
                 .HasDefaultValue(false);
 
@@ -238,11 +319,9 @@ public class AppDbContext : DbContext
             // EXTRA TIME CONFIGURATION
             // ==================================
 
-            // Indicates whether extra time was played
             entity.Property(m => m.WentToExtraTime)
                 .HasDefaultValue(false);
 
-            // Extra-time goals only (excluding 90-minute goals)
             entity.Property(m => m.HomeExtraTimeScore);
 
             entity.Property(m => m.AwayExtraTimeScore);
@@ -251,11 +330,9 @@ public class AppDbContext : DbContext
             // PENALTY SHOOTOUT CONFIGURATION
             // ==================================
 
-            // Indicates whether penalties were required
             entity.Property(m => m.WentToPenalties)
                 .HasDefaultValue(false);
 
-            // Penalty shootout scores
             entity.Property(m => m.HomePenaltyScore);
 
             entity.Property(m => m.AwayPenaltyScore);
