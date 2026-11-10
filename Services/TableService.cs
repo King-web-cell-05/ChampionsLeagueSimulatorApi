@@ -1,6 +1,10 @@
 ﻿
+using System.Security.Claims;
+
 using ChampionsLeagueSimulatorAPI.Data;
 using ChampionsLeagueSimulatorAPI.DTOs;
+
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 
 namespace ChampionsLeagueSimulatorAPI.Services;
@@ -8,14 +12,47 @@ namespace ChampionsLeagueSimulatorAPI.Services;
 public class TableService
 {
     private readonly AppDbContext _context;
+    private readonly IHttpContextAccessor _httpContextAccessor;
 
-    public TableService(AppDbContext context)
+    public TableService(
+        AppDbContext context,
+        IHttpContextAccessor httpContextAccessor)
     {
         _context = context;
+        _httpContextAccessor = httpContextAccessor;
     }
 
-    public async Task<List<StandingDto>> GenerateTable(
+    private Guid GetCurrentUserId()
+    {
+        var user = _httpContextAccessor.HttpContext?.User;
+
+        var value =
+            user?.FindFirstValue(ClaimTypes.NameIdentifier)
+            ?? user?.FindFirstValue("sub");
+
+        if (user?.Identity?.IsAuthenticated != true ||
+            !Guid.TryParse(value, out var userId))
+        {
+            throw new UnauthorizedAccessException(
+                "Authentication is required.");
+        }
+
+        return userId;
+    }
+
+    // Existing signature preserved.
+    public Task<List<StandingDto>> GenerateTable(
         Guid competitionId)
+    {
+        return GenerateTable(
+            competitionId,
+            GetCurrentUserId());
+    }
+
+    // Ownership-aware overload.
+    public async Task<List<StandingDto>> GenerateTable(
+        Guid competitionId,
+        Guid userId)
     {
         if (competitionId == Guid.Empty)
         {
@@ -24,10 +61,26 @@ public class TableService
                 nameof(competitionId));
         }
 
-        // Get all clubs registered in the competition.
+        // Verify that this competition belongs
+        // to the specified authenticated user.
+        var ownsCompetition = await _context.Competitions
+            .AsNoTracking()
+            .AnyAsync(c =>
+                c.Id == competitionId &&
+                c.OwnerId == userId);
+
+        if (!ownsCompetition)
+        {
+            throw new KeyNotFoundException(
+                "Competition not found.");
+        }
+
+        // Get registered clubs in this competition.
         var teams = await _context.CompetitionTeams
             .AsNoTracking()
-            .Where(ct => ct.CompetitionId == competitionId)
+            .Where(ct =>
+                ct.CompetitionId == competitionId &&
+                ct.Competition.OwnerId == userId)
             .Select(ct => ct.Team)
             .ToListAsync();
 
@@ -48,11 +101,12 @@ public class TableService
                 Position = 0
             });
 
-        // Only completed matches affect league standings.
+        // Only completed league matches count.
         var matches = await _context.Matches
             .AsNoTracking()
             .Where(m =>
                 m.CompetitionId == competitionId &&
+                m.Competition.OwnerId == userId &&
                 m.IsPlayed &&
                 m.HomeScore.HasValue &&
                 m.AwayScore.HasValue)
@@ -79,50 +133,42 @@ public class TableService
                     "Match scores cannot be negative.");
             }
 
-            // Matches played.
             home.Played++;
             away.Played++;
 
-            // Goals.
             home.GoalsFor += homeScore;
             home.GoalsAgainst += awayScore;
 
             away.GoalsFor += awayScore;
             away.GoalsAgainst += homeScore;
 
-            // Match result.
             if (homeScore > awayScore)
             {
                 home.Wins++;
                 home.Points += 3;
-
                 away.Losses++;
             }
             else if (awayScore > homeScore)
             {
                 away.Wins++;
                 away.Points += 3;
-
                 home.Losses++;
             }
             else
             {
                 home.Draws++;
                 away.Draws++;
-
                 home.Points++;
                 away.Points++;
             }
         }
 
-        // Calculate final goal differences.
         foreach (var standing in standings.Values)
         {
             standing.GoalDifference =
                 standing.GoalsFor - standing.GoalsAgainst;
         }
 
-        // Rank clubs.
         var rankedStandings = standings.Values
             .OrderByDescending(s => s.Points)
             .ThenByDescending(s => s.GoalDifference)
@@ -131,7 +177,6 @@ public class TableService
             .ThenBy(s => s.TeamName, StringComparer.Ordinal)
             .ToList();
 
-        // Assign positions starting from 1.
         for (int i = 0; i < rankedStandings.Count; i++)
         {
             rankedStandings[i].Position = i + 1;

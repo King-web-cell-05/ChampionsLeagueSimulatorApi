@@ -54,6 +54,9 @@ if (jwtKeyBytes.Length < 32)
 
 builder.Services.AddControllers();
 
+// Access authenticated HTTP user in application services.
+builder.Services.AddHttpContextAccessor();
+
 // ==========================================
 // APPLICATION SERVICES
 // ==========================================
