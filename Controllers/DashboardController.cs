@@ -1,4 +1,4 @@
-﻿
+﻿using System.Security.Claims;
 using ChampionsLeagueSimulatorAPI.Data;
 using ChampionsLeagueSimulatorAPI.Entities;
 using Microsoft.AspNetCore.Authorization;
@@ -19,6 +19,14 @@ public class DashboardController : ControllerBase
         _context = context;
     }
 
+    private Guid? GetCurrentUserId()
+    {
+        var rawId = User.FindFirstValue(ClaimTypes.NameIdentifier)
+            ?? User.FindFirstValue("sub");
+
+        return Guid.TryParse(rawId, out var userId) ? userId : null;
+    }
+
     // ==========================================
     // GENERAL DASHBOARD SUMMARY
     // GET: api/Dashboard/summary
@@ -27,11 +35,16 @@ public class DashboardController : ControllerBase
     [HttpGet("summary")]
     public async Task<IActionResult> GetSummary()
     {
+        var userId = GetCurrentUserId();
+        if (userId is null)
+            return Unauthorized(new { message = "A valid user ID is required." });
+
         var totalCompetitions = await _context.Competitions
-            .CountAsync();
+            .CountAsync(c => c.OwnerId == userId.Value);
 
         var activeCompetition = await _context.Competitions
             .AsNoTracking()
+            .Where(c => c.OwnerId == userId.Value)
             .OrderByDescending(c => c.CreatedDate)
             .FirstOrDefaultAsync();
 
@@ -45,16 +58,21 @@ public class DashboardController : ControllerBase
         }
         else
         {
-            registeredTeams = await _context.Teams.CountAsync();
+            registeredTeams = await _context.Teams.CountAsync(t => t.IsDefault || t.OwnerId == userId.Value);
         }
 
         IQueryable<Match> matchesQuery = _context.Matches
-            .AsNoTracking();
+            .AsNoTracking()
+            .Where(m => m.Competition.OwnerId == userId.Value);
 
         if (activeCompetition is not null)
         {
             matchesQuery = matchesQuery.Where(m =>
                 m.CompetitionId == activeCompetition.Id);
+        }
+        else
+        {
+            matchesQuery = matchesQuery.Where(m => false);
         }
 
         var totalMatches = await matchesQuery.CountAsync();
@@ -136,9 +154,13 @@ public class DashboardController : ControllerBase
         // 1. COMPETITION DETAILS
         // ======================================
 
+        var userId = GetCurrentUserId();
+        if (userId is null)
+            return Unauthorized(new { message = "A valid user ID is required." });
+
         var competition = await _context.Competitions
             .AsNoTracking()
-            .FirstOrDefaultAsync(c => c.Id == competitionId);
+            .FirstOrDefaultAsync(c => c.Id == competitionId && c.OwnerId == userId.Value);
 
         if (competition == null)
         {
