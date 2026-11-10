@@ -1,11 +1,17 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿
+using System.Security.Claims;
+
 using ChampionsLeagueSimulatorAPI.Data;
 using ChampionsLeagueSimulatorAPI.DTOs;
+
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
 namespace ChampionsLeagueSimulatorAPI.Controllers;
 
 [ApiController]
+[Authorize]
 [Route("api/[controller]")]
 public class MatchesController : ControllerBase
 {
@@ -16,11 +22,55 @@ public class MatchesController : ControllerBase
         _context = context;
     }
 
-    // GET: api/Matches/competition/{competitionId}
-    // Get all matches for a competition.
-    [HttpGet("competition/{competitionId:guid}")]
-    public async Task<IActionResult> GetMatches(Guid competitionId)
+    // ==========================================
+    // GET AUTHENTICATED USER ID
+    // ==========================================
+
+    private Guid? GetCurrentUserId()
     {
+        var value =
+            User.FindFirstValue(ClaimTypes.NameIdentifier)
+            ?? User.FindFirstValue("sub");
+
+        return Guid.TryParse(value, out var userId)
+            ? userId
+            : null;
+    }
+
+    // ==========================================
+    // VERIFY COMPETITION OWNERSHIP
+    // ==========================================
+
+    private async Task<bool> OwnsCompetitionAsync(
+        Guid competitionId,
+        Guid userId)
+    {
+        return await _context.Competitions
+            .AsNoTracking()
+            .AnyAsync(c =>
+                c.Id == competitionId &&
+                c.OwnerId == userId);
+    }
+
+    // ==========================================
+    // GET MATCHES FOR OWN COMPETITION
+    // GET: api/Matches/competition/{competitionId}
+    // ==========================================
+
+    [HttpGet("competition/{competitionId:guid}")]
+    public async Task<IActionResult> GetMatches(
+        Guid competitionId)
+    {
+        var userId = GetCurrentUserId();
+
+        if (userId is null)
+        {
+            return Unauthorized(new
+            {
+                message = "Invalid or expired authentication session."
+            });
+        }
+
         if (competitionId == Guid.Empty)
         {
             return BadRequest(new
@@ -29,9 +79,23 @@ public class MatchesController : ControllerBase
             });
         }
 
+        // Ensure the authenticated user owns
+        // the requested competition.
+        if (!await OwnsCompetitionAsync(
+                competitionId,
+                userId.Value))
+        {
+            return NotFound(new
+            {
+                message = "Competition not found."
+            });
+        }
+
         var matches = await _context.Matches
             .AsNoTracking()
-            .Where(m => m.CompetitionId == competitionId)
+            .Where(m =>
+                m.CompetitionId == competitionId &&
+                m.Competition.OwnerId == userId.Value)
             .Include(m => m.HomeTeam)
             .Include(m => m.AwayTeam)
             .Include(m => m.Competition)
@@ -43,13 +107,16 @@ public class MatchesController : ControllerBase
         {
             Id = m.Id,
             CompetitionId = m.CompetitionId,
-            CompetitionName = m.Competition?.Name ?? "Unknown",
+            CompetitionName =
+                m.Competition?.Name ?? "Unknown",
 
             HomeTeamId = m.HomeTeamId,
-            HomeTeamName = m.HomeTeam?.Name ?? "Unknown",
+            HomeTeamName =
+                m.HomeTeam?.Name ?? "Unknown",
 
             AwayTeamId = m.AwayTeamId,
-            AwayTeamName = m.AwayTeam?.Name ?? "Unknown",
+            AwayTeamName =
+                m.AwayTeam?.Name ?? "Unknown",
 
             KickoffUtc = m.KickoffUtc,
 
@@ -63,14 +130,27 @@ public class MatchesController : ControllerBase
         return Ok(result);
     }
 
-    // POST: api/Matches/{matchId}/result?homeScore=2&awayScore=1
-    // Record a match result.
+    // ==========================================
+    // RECORD MATCH RESULT
+    // POST: api/Matches/{matchId}/result
+    // ==========================================
+
     [HttpPost("{matchId:guid}/result")]
     public async Task<IActionResult> AddResult(
         Guid matchId,
         [FromQuery] int homeScore,
         [FromQuery] int awayScore)
     {
+        var userId = GetCurrentUserId();
+
+        if (userId is null)
+        {
+            return Unauthorized(new
+            {
+                message = "Invalid or expired authentication session."
+            });
+        }
+
         if (matchId == Guid.Empty)
         {
             return BadRequest(new
@@ -87,8 +167,12 @@ public class MatchesController : ControllerBase
             });
         }
 
+        // Match must belong to a competition
+        // owned by the authenticated user.
         var match = await _context.Matches
-            .FirstOrDefaultAsync(m => m.Id == matchId);
+            .FirstOrDefaultAsync(m =>
+                m.Id == matchId &&
+                m.Competition.OwnerId == userId.Value);
 
         if (match is null)
         {
@@ -104,6 +188,7 @@ public class MatchesController : ControllerBase
 
         await _context.SaveChangesAsync();
 
+        // Preserve the original response format.
         return Ok(new
         {
             match.Id,
@@ -117,12 +202,25 @@ public class MatchesController : ControllerBase
         });
     }
 
+    // ==========================================
+    // DELETE MATCHES FROM OWN COMPETITION
     // DELETE: api/Matches/competition/{competitionId}
-    // Deletes every match in the specified competition.
+    // ==========================================
+
     [HttpDelete("competition/{competitionId:guid}")]
     public async Task<IActionResult> DeleteMatchesByCompetition(
         Guid competitionId)
     {
+        var userId = GetCurrentUserId();
+
+        if (userId is null)
+        {
+            return Unauthorized(new
+            {
+                message = "Invalid or expired authentication session."
+            });
+        }
+
         if (competitionId == Guid.Empty)
         {
             return BadRequest(new
@@ -131,27 +229,42 @@ public class MatchesController : ControllerBase
             });
         }
 
-        var matches = _context.Matches
-            .Where(m => m.CompetitionId == competitionId);
-
-        if (!await matches.AnyAsync())
+        // Verify ownership before deleting anything.
+        if (!await OwnsCompetitionAsync(
+                competitionId,
+                userId.Value))
         {
             return NotFound(new
             {
-                message = "No matches found for this competition."
+                message = "Competition not found."
             });
         }
 
-        var matchList = await matches.ToListAsync();
+        var matches = await _context.Matches
+            .Where(m =>
+                m.CompetitionId == competitionId &&
+                m.Competition.OwnerId == userId.Value)
+            .ToListAsync();
 
-        _context.Matches.RemoveRange(matchList);
+        if (matches.Count == 0)
+        {
+            return NotFound(new
+            {
+                message =
+                    "No matches found for this competition."
+            });
+        }
+
+        _context.Matches.RemoveRange(matches);
+
         await _context.SaveChangesAsync();
 
         return Ok(new
         {
-            message = "All matches for the competition have been deleted.",
+            message =
+                "All matches for the competition have been deleted.",
             competitionId,
-            deletedCount = matchList.Count
+            deletedCount = matches.Count
         });
     }
 }
