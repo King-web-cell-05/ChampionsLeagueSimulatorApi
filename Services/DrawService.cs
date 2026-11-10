@@ -1,5 +1,10 @@
-﻿using System.Security.Claims;
+﻿
+using System;
+using System.Collections.Generic;
 using System.Data;
+using System.Linq;
+using System.Security.Claims;
+using System.Threading.Tasks;
 
 using ChampionsLeagueSimulatorAPI.Data;
 using ChampionsLeagueSimulatorAPI.Entities;
@@ -24,7 +29,7 @@ public class DrawService
     }
 
     // ==========================================
-    // GET AUTHENTICATED USER ID
+    // AUTHENTICATION
     // ==========================================
 
     private Guid GetCurrentUserId()
@@ -35,8 +40,10 @@ public class DrawService
             user?.FindFirstValue(ClaimTypes.NameIdentifier)
             ?? user?.FindFirstValue("sub");
 
-        if (user?.Identity?.IsAuthenticated != true ||
-            !Guid.TryParse(value, out var userId))
+        if (
+            user?.Identity?.IsAuthenticated != true ||
+            !Guid.TryParse(value, out var userId)
+        )
         {
             throw new UnauthorizedAccessException(
                 "Authentication is required.");
@@ -46,7 +53,7 @@ public class DrawService
     }
 
     // ==========================================
-    // VERIFY COMPETITION OWNERSHIP
+    // COMPETITION OWNERSHIP
     // ==========================================
 
     private async Task VerifyOwnershipAsync(
@@ -74,7 +81,7 @@ public class DrawService
     }
 
     // ==========================================
-    // GENERATE FIXTURES - COMPATIBILITY OVERLOAD
+    // PUBLIC GENERATION METHODS
     // ==========================================
 
     public Task<List<Match>> GenerateLeagueFixtures(
@@ -85,10 +92,6 @@ public class DrawService
             GetCurrentUserId());
     }
 
-    // ==========================================
-    // DYNAMIC FIXTURE GENERATION
-    // ==========================================
-
     public async Task<List<Match>> GenerateLeagueFixtures(
         Guid competitionId,
         Guid userId)
@@ -97,11 +100,7 @@ public class DrawService
             competitionId,
             userId);
 
-        // Reuse an existing transaction when this
-        // method is called during team registration.
-        // Otherwise, start a new transaction.
-
-        var ownsTransaction =
+        bool ownsTransaction =
             _context.Database.CurrentTransaction == null;
 
         IDbContextTransaction? transaction = null;
@@ -116,7 +115,7 @@ public class DrawService
         try
         {
             // ==========================================
-            // GET REGISTERED TEAMS
+            // LOAD REGISTERED CLUBS
             // ==========================================
 
             var teams = await _context.CompetitionTeams
@@ -127,7 +126,6 @@ public class DrawService
                 .OrderBy(t => t.Name)
                 .ToListAsync();
 
-            // A minimum of two teams is required.
             if (teams.Count < 2)
             {
                 if (transaction != null)
@@ -139,19 +137,22 @@ public class DrawService
             }
 
             // ==========================================
-            // GET EXISTING MATCHES
+            // LOAD EXISTING FIXTURES
             // ==========================================
 
             var existingMatches = await _context.Matches
-                .AsNoTracking()
                 .Where(m =>
                     m.CompetitionId == competitionId)
+                .OrderBy(m => m.MatchDay)
+                .ThenBy(m => m.Id)
                 .ToListAsync();
 
-            // Store existing pairs in a HashSet.
-            // Home/Away order does not matter.
-            var existingPairs = new HashSet<
-                (Guid First, Guid Second)>();
+            // Every pair of clubs plays once.
+            // Home/away order is ignored when checking
+            // whether the pairing already exists.
+
+            var existingPairs =
+                new HashSet<(Guid First, Guid Second)>();
 
             foreach (var match in existingMatches)
             {
@@ -162,58 +163,45 @@ public class DrawService
             }
 
             // ==========================================
-            // DETERMINE NEXT MATCHDAY
-            // ==========================================
-
-            int nextMatchday = existingMatches.Count == 0
-                ? 1
-                : existingMatches.Max(m => m.MatchDay) + 1;
-
-            var fixtures = new List<Match>();
-
-            // ==========================================
             // GENERATE ONLY MISSING PAIRINGS
             // ==========================================
+
+            var newFixtures = new List<Match>();
 
             for (int i = 0; i < teams.Count; i++)
             {
                 for (int j = i + 1; j < teams.Count; j++)
                 {
-                    var firstTeam = teams[i];
-                    var secondTeam = teams[j];
+                    var first = teams[i];
+                    var second = teams[j];
 
                     var pair = NormalizePair(
-                        firstTeam.Id,
-                        secondTeam.Id);
+                        first.Id,
+                        second.Id);
 
-                    // Skip previously scheduled matches.
                     if (existingPairs.Contains(pair))
                     {
                         continue;
                     }
 
-                    // Randomize home and away clubs.
-                    bool firstTeamHome =
+                    bool firstIsHome =
                         Random.Shared.Next(2) == 0;
 
-                    var homeTeamId = firstTeamHome
-                        ? firstTeam.Id
-                        : secondTeam.Id;
-
-                    var awayTeamId = firstTeamHome
-                        ? secondTeam.Id
-                        : firstTeam.Id;
-
-                    fixtures.Add(new Match
+                    newFixtures.Add(new Match
                     {
                         Id = Guid.NewGuid(),
 
                         CompetitionId = competitionId,
 
-                        HomeTeamId = homeTeamId,
-                        AwayTeamId = awayTeamId,
+                        HomeTeamId = firstIsHome
+                            ? first.Id
+                            : second.Id,
 
-                        MatchDay = nextMatchday,
+                        AwayTeamId = firstIsHome
+                            ? second.Id
+                            : first.Id,
+
+                        MatchDay = 0,
 
                         KickoffUtc = null,
 
@@ -224,20 +212,97 @@ public class DrawService
                     });
 
                     existingPairs.Add(pair);
-
-                    // Allocate a separate matchday.
-                    nextMatchday++;
                 }
             }
 
             // ==========================================
-            // SAVE NEW FIXTURES
+            // PRESERVE COMPLETED MATCHDAYS
             // ==========================================
 
-            if (fixtures.Count > 0)
-            {
-                _context.Matches.AddRange(fixtures);
+            // Completed matches are never changed.
+            // Unplayed fixtures can be reorganized
+            // into matchdays without scheduling a club
+            // more than once on the same day.
 
+            var completedMatches = existingMatches
+                .Where(m => m.IsPlayed)
+                .ToList();
+
+            var unplayedMatches = existingMatches
+                .Where(m => !m.IsPlayed)
+                .ToList();
+
+            // Preserve matchday assignments for all
+            // completed fixtures.
+
+            var occupiedDays =
+                new Dictionary<int, HashSet<Guid>>();
+
+            foreach (var match in completedMatches)
+            {
+                if (!occupiedDays.TryGetValue(
+                    match.MatchDay,
+                    out var occupied))
+                {
+                    occupied = new HashSet<Guid>();
+
+                    occupiedDays[match.MatchDay] =
+                        occupied;
+                }
+
+                occupied.Add(match.HomeTeamId);
+                occupied.Add(match.AwayTeamId);
+            }
+
+            // ==========================================
+            // SCHEDULE UNPLAYED FIXTURES
+            // ==========================================
+
+            // Previously scheduled matches are processed
+            // first, followed by newly generated matches.
+            // This keeps the ordering relatively stable,
+            // although unplayed matchdays may change.
+
+            var matchesToSchedule = unplayedMatches
+                .Concat(newFixtures)
+                .ToList();
+
+            foreach (var match in matchesToSchedule)
+            {
+                int day = FindAvailableMatchday(
+                    match.HomeTeamId,
+                    match.AwayTeamId,
+                    occupiedDays);
+
+                match.MatchDay = day;
+
+                if (!occupiedDays.TryGetValue(
+                    day,
+                    out var occupied))
+                {
+                    occupied = new HashSet<Guid>();
+
+                    occupiedDays[day] = occupied;
+                }
+
+                occupied.Add(match.HomeTeamId);
+                occupied.Add(match.AwayTeamId);
+            }
+
+            // ==========================================
+            // SAVE FIXTURES
+            // ==========================================
+
+            if (newFixtures.Count > 0)
+            {
+                _context.Matches.AddRange(newFixtures);
+            }
+
+            if (
+                newFixtures.Count > 0 ||
+                unplayedMatches.Count > 0
+            )
+            {
                 await _context.SaveChangesAsync();
             }
 
@@ -246,7 +311,7 @@ public class DrawService
                 await transaction.CommitAsync();
             }
 
-            return fixtures;
+            return newFixtures;
         }
         catch
         {
@@ -267,12 +332,48 @@ public class DrawService
     }
 
     // ==========================================
-    // NORMALIZE TEAM PAIR
+    // FIND AVAILABLE MATCHDAY
     // ==========================================
 
-    private static (Guid First, Guid Second) NormalizePair(
-        Guid teamA,
-        Guid teamB)
+    private static int FindAvailableMatchday(
+        Guid homeTeamId,
+        Guid awayTeamId,
+        Dictionary<int, HashSet<Guid>> occupiedDays)
+    {
+        int matchday = 1;
+
+        while (true)
+        {
+            if (!occupiedDays.TryGetValue(
+                matchday,
+                out var occupiedTeams))
+            {
+                return matchday;
+            }
+
+            bool homeBusy =
+                occupiedTeams.Contains(homeTeamId);
+
+            bool awayBusy =
+                occupiedTeams.Contains(awayTeamId);
+
+            if (!homeBusy && !awayBusy)
+            {
+                return matchday;
+            }
+
+            matchday++;
+        }
+    }
+
+    // ==========================================
+    // NORMALIZE CLUB PAIR
+    // ==========================================
+
+    private static (Guid First, Guid Second)
+        NormalizePair(
+            Guid teamA,
+            Guid teamB)
     {
         return teamA.CompareTo(teamB) < 0
             ? (teamA, teamB)
@@ -286,6 +387,10 @@ public class DrawService
     public Task<List<Match>> GenerateDoubleRoundRobin(
         Guid competitionId)
     {
+        // Compatibility with older callers.
+        // This currently generates a single
+        // round-robin, not a home-and-away league.
+
         return GenerateLeagueFixtures(competitionId);
     }
 }
