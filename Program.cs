@@ -287,30 +287,7 @@ builder.Services.AddSwaggerGen(options =>
 
 var app = builder.Build();
 
-// ==========================================
-// ONE-TIME TEAM LOGO UPDATE
-// ==========================================
 
-// Runs only in Development.
-// Updates existing teams with missing logo URLs.
-// Does not change existing team IDs, names,
-// countries, coefficients, or competition records.
-
-if (app.Environment.IsDevelopment())
-{
-    using var scope = app.Services.CreateScope();
-
-    var db = scope.ServiceProvider
-        .GetRequiredService<AppDbContext>();
-
-    var updated =
-        await TeamLogoSeeder.UpdateMissingLogosAsync(db);
-
-    app.Logger.LogInformation(
-        "FootballSim: Updated {Count} team logos.",
-        updated
-    );
-}
 
 // ==========================================
 // SWAGGER MIDDLEWARE
