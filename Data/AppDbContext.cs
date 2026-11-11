@@ -25,6 +25,9 @@ public class AppDbContext : DbContext
 
     public DbSet<User> Users => Set<User>();
 
+    public DbSet<Notification> Notifications =>
+        Set<Notification>();
+
     public DbSet<CompetitionTeam> CompetitionTeams =>
         Set<CompetitionTeam>();
 
@@ -131,6 +134,54 @@ public class AppDbContext : DbContext
 
             entity.HasIndex(u => u.Email)
                 .IsUnique();
+        });
+
+        // ======================================
+        // NOTIFICATION CONFIGURATION
+        // ======================================
+
+        modelBuilder.Entity<Notification>(entity =>
+        {
+            entity.HasKey(n => n.Id);
+
+            entity.Property(n => n.Title)
+                .IsRequired()
+                .HasMaxLength(150);
+
+            entity.Property(n => n.Message)
+                .IsRequired()
+                .HasMaxLength(1000);
+
+            entity.Property(n => n.Type)
+                .IsRequired()
+                .HasMaxLength(50)
+                .HasDefaultValue("system");
+
+            entity.Property(n => n.IsRead)
+                .HasDefaultValue(false);
+
+            entity.Property(n => n.CreatedAtUtc)
+                .HasColumnType("timestamp with time zone");
+
+            entity.Property(n => n.ReadAtUtc)
+                .HasColumnType("timestamp with time zone");
+
+            entity.HasOne(n => n.User)
+                .WithMany()
+                .HasForeignKey(n => n.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasIndex(n => new
+            {
+                n.UserId,
+                n.CreatedAtUtc
+            });
+
+            entity.HasIndex(n => new
+            {
+                n.UserId,
+                n.IsRead
+            });
         });
 
         // ======================================
