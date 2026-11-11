@@ -1,6 +1,10 @@
 ﻿
-using System.Security.Claims;
+using System;
+using System.Collections.Generic;
 using System.Data;
+using System.Linq;
+using System.Security.Claims;
+using System.Threading.Tasks;
 using ChampionsLeagueSimulatorAPI.Data;
 using ChampionsLeagueSimulatorAPI.DTOs;
 using ChampionsLeagueSimulatorAPI.Entities;
@@ -210,6 +214,10 @@ public class SimulationService
 
         List<MatchDto> simulatedMatches;
 
+        // ======================================
+        // DATABASE TRANSACTION
+        // ======================================
+
         await using (
             var transaction =
                 await _context.Database
@@ -225,6 +233,7 @@ public class SimulationService
                             userId);
 
             // Filter a specific match.
+
             if (matchId.HasValue)
             {
                 query = query.Where(m =>
@@ -232,13 +241,17 @@ public class SimulationService
             }
 
             // Filter a specific matchday.
+
             if (matchday.HasValue)
             {
                 query = query.Where(m =>
                     m.MatchDay == matchday.Value);
             }
 
-            // Load the match and both clubs.
+            // ==================================
+            // LOAD MATCHES AND CLUBS
+            // ==================================
+
             var matches = await query
                 .Include(m => m.HomeTeam)
                 .Include(m => m.AwayTeam)
@@ -270,6 +283,7 @@ public class SimulationService
             }
 
             // A single match must never be replayed.
+
             if (
                 matchId.HasValue &&
                 matches[0].IsPlayed)
@@ -278,12 +292,14 @@ public class SimulationService
                     "This match has already been played.");
             }
 
+            // Only simulate unplayed matches.
+
             var pendingMatches = matches
                 .Where(m => !m.IsPlayed)
                 .ToList();
 
             // ==================================
-            // REALISTIC MATCH SIMULATION
+            // SIMULATE MATCHES AND STATISTICS
             // ==================================
 
             foreach (var match in pendingMatches)
@@ -293,6 +309,10 @@ public class SimulationService
                         match.HomeTeam,
                         match.AwayTeam);
 
+                // ==============================
+                // SAVE FINAL SCORE
+                // ==============================
+
                 match.HomeScore =
                     result.HomeScore;
 
@@ -300,12 +320,85 @@ public class SimulationService
                     result.AwayScore;
 
                 match.IsPlayed = true;
+
+                // ==============================
+                // CREATE MATCH STATISTICS
+                // ==============================
+
+                var statistics = new MatchStatistics
+                {
+                    Id = Guid.NewGuid(),
+
+                    MatchId = match.Id,
+
+                    HomePossession =
+                        result.HomePossession,
+
+                    AwayPossession =
+                        result.AwayPossession,
+
+                    HomeShots =
+                        result.HomeShots,
+
+                    AwayShots =
+                        result.AwayShots,
+
+                    HomeShotsOnTarget =
+                        result.HomeShotsOnTarget,
+
+                    AwayShotsOnTarget =
+                        result.AwayShotsOnTarget,
+
+                    HomeCorners =
+                        result.HomeCorners,
+
+                    AwayCorners =
+                        result.AwayCorners,
+
+                    HomeFouls =
+                        result.HomeFouls,
+
+                    AwayFouls =
+                        result.AwayFouls,
+
+                    HomeYellowCards =
+                        result.HomeYellowCards,
+
+                    AwayYellowCards =
+                        result.AwayYellowCards,
+
+                    HomeRedCards =
+                        result.HomeRedCards,
+
+                    AwayRedCards =
+                        result.AwayRedCards,
+
+                    HomeExpectedGoals =
+                        result.HomeExpectedGoals,
+
+                    AwayExpectedGoals =
+                        result.AwayExpectedGoals
+                };
+
+                // Add the statistics to the
+                // same database context.
+
+                _context.MatchStatistics.Add(
+                    statistics);
             }
+
+            // ==================================
+            // SAVE SCORE AND STATISTICS TOGETHER
+            // ==================================
 
             if (pendingMatches.Count > 0)
             {
                 await _context.SaveChangesAsync();
             }
+
+            // ==================================
+            // PREPARE RESPONSE
+            // ==================================
 
             simulatedMatches = pendingMatches
                 .Select(m => new MatchDto
@@ -349,6 +442,8 @@ public class SimulationService
                         m.MatchDay
                 })
                 .ToList();
+
+            // Commit the score and statistics.
 
             await transaction.CommitAsync();
         }

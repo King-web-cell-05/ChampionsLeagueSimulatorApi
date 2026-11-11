@@ -206,7 +206,9 @@ namespace ChampionsLeagueSimulatorApi.Migrations
                         .HasColumnType("uuid");
 
                     b.Property<bool>("IsPlayed")
-                        .HasColumnType("boolean");
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
 
                     b.Property<DateTime?>("KickoffUtc")
                         .HasColumnType("timestamp with time zone");
@@ -218,11 +220,91 @@ namespace ChampionsLeagueSimulatorApi.Migrations
 
                     b.HasIndex("AwayTeamId");
 
-                    b.HasIndex("CompetitionId");
-
                     b.HasIndex("HomeTeamId");
 
+                    b.HasIndex("CompetitionId", "IsPlayed");
+
+                    b.HasIndex("CompetitionId", "MatchDay");
+
                     b.ToTable("Matches");
+                });
+
+            modelBuilder.Entity("ChampionsLeagueSimulatorAPI.Entities.MatchStatistics", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("AwayCorners")
+                        .HasColumnType("integer");
+
+                    b.Property<double>("AwayExpectedGoals")
+                        .HasColumnType("double precision");
+
+                    b.Property<int>("AwayFouls")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("AwayPossession")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("AwayRedCards")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("AwayShots")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("AwayShotsOnTarget")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("AwayYellowCards")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("HomeCorners")
+                        .HasColumnType("integer");
+
+                    b.Property<double>("HomeExpectedGoals")
+                        .HasColumnType("double precision");
+
+                    b.Property<int>("HomeFouls")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("HomePossession")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("HomeRedCards")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("HomeShots")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("HomeShotsOnTarget")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("HomeYellowCards")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("MatchId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MatchId")
+                        .IsUnique();
+
+                    b.ToTable("MatchStatistics", t =>
+                        {
+                            t.HasCheckConstraint("CK_MatchStatistics_AwayPossession", "\"AwayPossession\" BETWEEN 0 AND 100");
+
+                            t.HasCheckConstraint("CK_MatchStatistics_AwayShots", "\"AwayShots\" >= 0 AND \"AwayShotsOnTarget\" >= 0 AND \"AwayShotsOnTarget\" <= \"AwayShots\"");
+
+                            t.HasCheckConstraint("CK_MatchStatistics_ExpectedGoals", "\"HomeExpectedGoals\" >= 0 AND \"AwayExpectedGoals\" >= 0");
+
+                            t.HasCheckConstraint("CK_MatchStatistics_HomePossession", "\"HomePossession\" BETWEEN 0 AND 100");
+
+                            t.HasCheckConstraint("CK_MatchStatistics_HomeShots", "\"HomeShots\" >= 0 AND \"HomeShotsOnTarget\" >= 0 AND \"HomeShotsOnTarget\" <= \"HomeShots\"");
+
+                            t.HasCheckConstraint("CK_MatchStatistics_TotalPossession", "\"HomePossession\" + \"AwayPossession\" = 100");
+                        });
                 });
 
             modelBuilder.Entity("ChampionsLeagueSimulatorAPI.Entities.Standing", b =>
@@ -480,6 +562,17 @@ namespace ChampionsLeagueSimulatorApi.Migrations
                     b.Navigation("HomeTeam");
                 });
 
+            modelBuilder.Entity("ChampionsLeagueSimulatorAPI.Entities.MatchStatistics", b =>
+                {
+                    b.HasOne("ChampionsLeagueSimulatorAPI.Entities.Match", "Match")
+                        .WithOne("Statistics")
+                        .HasForeignKey("ChampionsLeagueSimulatorAPI.Entities.MatchStatistics", "MatchId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Match");
+                });
+
             modelBuilder.Entity("ChampionsLeagueSimulatorAPI.Entities.Standing", b =>
                 {
                     b.HasOne("ChampionsLeagueSimulatorAPI.Entities.Competition", null)
@@ -515,6 +608,11 @@ namespace ChampionsLeagueSimulatorApi.Migrations
             modelBuilder.Entity("ChampionsLeagueSimulatorAPI.Entities.KnockoutTie", b =>
                 {
                     b.Navigation("Matches");
+                });
+
+            modelBuilder.Entity("ChampionsLeagueSimulatorAPI.Entities.Match", b =>
+                {
+                    b.Navigation("Statistics");
                 });
 #pragma warning restore 612, 618
         }

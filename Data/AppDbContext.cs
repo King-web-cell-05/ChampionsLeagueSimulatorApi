@@ -6,7 +6,8 @@ namespace ChampionsLeagueSimulatorAPI.Data;
 
 public class AppDbContext : DbContext
 {
-    public AppDbContext(DbContextOptions<AppDbContext> options)
+    public AppDbContext(
+        DbContextOptions<AppDbContext> options)
         : base(options)
     {
     }
@@ -29,6 +30,13 @@ public class AppDbContext : DbContext
 
     public DbSet<Standing> Standings =>
         Set<Standing>();
+
+    // ==========================================
+    // MATCH STATISTICS TABLE
+    // ==========================================
+
+    public DbSet<MatchStatistics> MatchStatistics =>
+        Set<MatchStatistics>();
 
     // ==========================================
     // KNOCKOUT STAGE TABLES
@@ -73,27 +81,35 @@ public class AppDbContext : DbContext
 
             // Private club -> Owner
             // Shared default clubs have no owner.
+
             entity.HasOne(t => t.Owner)
                 .WithMany()
                 .HasForeignKey(t => t.OwnerId)
                 .OnDelete(DeleteBehavior.Restrict);
 
             // Optimize private club lookups.
+
             entity.HasIndex(t => t.OwnerId);
 
             // Optimize default/private club filtering.
+
             entity.HasIndex(t => new
             {
                 t.IsDefault,
                 t.OwnerId
             });
 
-            // Enforce valid club ownership:
-            // Default club: IsDefault = true,
-            //               OwnerId = null
+            // ==================================
+            // CLUB OWNERSHIP VALIDATION
+            // ==================================
+
+            // Default club:
+            // IsDefault = true
+            // OwnerId = null
             //
-            // Private club: IsDefault = false,
-            //               OwnerId != null
+            // Private club:
+            // IsDefault = false
+            // OwnerId != null
 
             entity.ToTable(table =>
                 table.HasCheckConstraint(
@@ -138,6 +154,7 @@ public class AppDbContext : DbContext
                     "timestamp with time zone");
 
             // Competition -> Creator
+
             entity.HasOne(c => c.Owner)
                 .WithMany()
                 .HasForeignKey(c => c.OwnerId)
@@ -145,6 +162,7 @@ public class AppDbContext : DbContext
 
             // Optimize loading competitions
             // belonging to the current user.
+
             entity.HasIndex(c => c.OwnerId);
 
             entity.HasIndex(c => new
@@ -160,27 +178,193 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<Match>(entity =>
         {
+            entity.HasKey(m => m.Id);
+
             entity.Property(m => m.KickoffUtc)
                 .HasColumnType(
                     "timestamp with time zone");
 
+            entity.Property(m => m.IsPlayed)
+                .HasDefaultValue(false);
+
             // Match -> Home Team
+
             entity.HasOne(m => m.HomeTeam)
                 .WithMany()
                 .HasForeignKey(m => m.HomeTeamId)
                 .OnDelete(DeleteBehavior.Restrict);
 
             // Match -> Away Team
+
             entity.HasOne(m => m.AwayTeam)
                 .WithMany()
                 .HasForeignKey(m => m.AwayTeamId)
                 .OnDelete(DeleteBehavior.Restrict);
 
             // Match -> Competition
+
             entity.HasOne(m => m.Competition)
                 .WithMany(c => c.Matches)
                 .HasForeignKey(m => m.CompetitionId)
                 .OnDelete(DeleteBehavior.Restrict);
+
+            // ==================================
+            // MATCH -> MATCH STATISTICS
+            // ==================================
+
+            // A match may have one statistics
+            // record after it is simulated.
+            //
+            // Existing matches can have null
+            // statistics without breaking.
+
+            entity.HasOne(m => m.Statistics)
+                .WithOne(s => s.Match)
+                .HasForeignKey<MatchStatistics>(
+                    s => s.MatchId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // ==================================
+            // MATCH LOOKUP INDEXES
+            // ==================================
+
+            entity.HasIndex(m => new
+            {
+                m.CompetitionId,
+                m.MatchDay
+            });
+
+            entity.HasIndex(m => new
+            {
+                m.CompetitionId,
+                m.IsPlayed
+            });
+        });
+
+        // ======================================
+        // MATCH STATISTICS CONFIGURATION
+        // ======================================
+
+        modelBuilder.Entity<MatchStatistics>(entity =>
+        {
+            entity.HasKey(s => s.Id);
+
+            // ==================================
+            // UNIQUE MATCH STATISTICS
+            // ==================================
+
+            // Each match must have at most
+            // one statistics record.
+
+            entity.HasIndex(s => s.MatchId)
+                .IsUnique();
+
+            // ==================================
+            // POSSESSION
+            // ==================================
+
+            entity.Property(s => s.HomePossession)
+                .IsRequired();
+
+            entity.Property(s => s.AwayPossession)
+                .IsRequired();
+
+            // ==================================
+            // SHOTS
+            // ==================================
+
+            entity.Property(s => s.HomeShots)
+                .IsRequired();
+
+            entity.Property(s => s.AwayShots)
+                .IsRequired();
+
+            entity.Property(s => s.HomeShotsOnTarget)
+                .IsRequired();
+
+            entity.Property(s => s.AwayShotsOnTarget)
+                .IsRequired();
+
+            // ==================================
+            // CORNER KICKS
+            // ==================================
+
+            entity.Property(s => s.HomeCorners)
+                .IsRequired();
+
+            entity.Property(s => s.AwayCorners)
+                .IsRequired();
+
+            // ==================================
+            // FOULS
+            // ==================================
+
+            entity.Property(s => s.HomeFouls)
+                .IsRequired();
+
+            entity.Property(s => s.AwayFouls)
+                .IsRequired();
+
+            // ==================================
+            // YELLOW CARDS
+            // ==================================
+
+            entity.Property(s => s.HomeYellowCards)
+                .IsRequired();
+
+            entity.Property(s => s.AwayYellowCards)
+                .IsRequired();
+
+            // ==================================
+            // RED CARDS
+            // ==================================
+
+            entity.Property(s => s.HomeRedCards)
+                .IsRequired();
+
+            entity.Property(s => s.AwayRedCards)
+                .IsRequired();
+
+            // ==================================
+            // EXPECTED GOALS
+            // ==================================
+
+            entity.Property(s => s.HomeExpectedGoals)
+                .IsRequired();
+
+            entity.Property(s => s.AwayExpectedGoals)
+                .IsRequired();
+
+            // ==================================
+            // DATA VALIDATION
+            // ==================================
+
+            entity.ToTable(table =>
+            {
+                table.HasCheckConstraint(
+                    "CK_MatchStatistics_HomePossession",
+                    "\"HomePossession\" BETWEEN 0 AND 100");
+
+                table.HasCheckConstraint(
+                    "CK_MatchStatistics_AwayPossession",
+                    "\"AwayPossession\" BETWEEN 0 AND 100");
+
+                table.HasCheckConstraint(
+                    "CK_MatchStatistics_TotalPossession",
+                    "\"HomePossession\" + \"AwayPossession\" = 100");
+
+                table.HasCheckConstraint(
+                    "CK_MatchStatistics_HomeShots",
+                    "\"HomeShots\" >= 0 AND \"HomeShotsOnTarget\" >= 0 AND \"HomeShotsOnTarget\" <= \"HomeShots\"");
+
+                table.HasCheckConstraint(
+                    "CK_MatchStatistics_AwayShots",
+                    "\"AwayShots\" >= 0 AND \"AwayShotsOnTarget\" >= 0 AND \"AwayShotsOnTarget\" <= \"AwayShots\"");
+
+                table.HasCheckConstraint(
+                    "CK_MatchStatistics_ExpectedGoals",
+                    "\"HomeExpectedGoals\" >= 0 AND \"AwayExpectedGoals\" >= 0");
+            });
         });
 
         // ======================================
@@ -196,12 +380,14 @@ public class AppDbContext : DbContext
             });
 
             // CompetitionTeam -> Team
+
             entity.HasOne(ct => ct.Team)
                 .WithMany()
                 .HasForeignKey(ct => ct.TeamId)
                 .OnDelete(DeleteBehavior.Restrict);
 
             // CompetitionTeam -> Competition
+
             entity.HasOne(ct => ct.Competition)
                 .WithMany()
                 .HasForeignKey(ct => ct.CompetitionId)
@@ -215,12 +401,14 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<Standing>(entity =>
         {
             // Standing -> Team
+
             entity.HasOne(s => s.Team)
                 .WithMany()
                 .HasForeignKey(s => s.TeamId)
                 .OnDelete(DeleteBehavior.Restrict);
 
             // Standing -> Competition
+
             entity.HasOne<Competition>()
                 .WithMany()
                 .HasForeignKey(s => s.CompetitionId)
@@ -244,24 +432,28 @@ public class AppDbContext : DbContext
             .IsUnique();
 
             // KnockoutTie -> Competition
+
             entity.HasOne(t => t.Competition)
                 .WithMany()
                 .HasForeignKey(t => t.CompetitionId)
                 .OnDelete(DeleteBehavior.Restrict);
 
             // KnockoutTie -> Home Team
+
             entity.HasOne(t => t.HomeTeam)
                 .WithMany()
                 .HasForeignKey(t => t.HomeTeamId)
                 .OnDelete(DeleteBehavior.Restrict);
 
             // KnockoutTie -> Away Team
+
             entity.HasOne(t => t.AwayTeam)
                 .WithMany()
                 .HasForeignKey(t => t.AwayTeamId)
                 .OnDelete(DeleteBehavior.Restrict);
 
             // KnockoutTie -> Winner Team
+
             entity.HasOne(t => t.WinnerTeam)
                 .WithMany()
                 .HasForeignKey(t => t.WinnerTeamId)
@@ -291,18 +483,21 @@ public class AppDbContext : DbContext
             .IsUnique();
 
             // KnockoutMatch -> KnockoutTie
+
             entity.HasOne(m => m.KnockoutTie)
                 .WithMany(t => t.Matches)
                 .HasForeignKey(m => m.KnockoutTieId)
                 .OnDelete(DeleteBehavior.Cascade);
 
             // KnockoutMatch -> Home Team
+
             entity.HasOne(m => m.HomeTeam)
                 .WithMany()
                 .HasForeignKey(m => m.HomeTeamId)
                 .OnDelete(DeleteBehavior.Restrict);
 
             // KnockoutMatch -> Away Team
+
             entity.HasOne(m => m.AwayTeam)
                 .WithMany()
                 .HasForeignKey(m => m.AwayTeamId)

@@ -4,76 +4,231 @@ using ChampionsLeagueSimulatorAPI.Entities;
 
 namespace ChampionsLeagueSimulatorAPI.Services;
 
+// ==========================================
+// MATCH SIMULATION RESULT
+// ==========================================
+
+public sealed class MatchEngineResult
+{
+    public int HomeScore { get; init; }
+    public int AwayScore { get; init; }
+
+    public int HomePossession { get; init; }
+    public int AwayPossession { get; init; }
+
+    public int HomeShots { get; init; }
+    public int AwayShots { get; init; }
+
+    public int HomeShotsOnTarget { get; init; }
+    public int AwayShotsOnTarget { get; init; }
+
+    public int HomeCorners { get; init; }
+    public int AwayCorners { get; init; }
+
+    public int HomeFouls { get; init; }
+    public int AwayFouls { get; init; }
+
+    public int HomeYellowCards { get; init; }
+    public int AwayYellowCards { get; init; }
+
+    public int HomeRedCards { get; init; }
+    public int AwayRedCards { get; init; }
+
+    public double HomeExpectedGoals { get; init; }
+    public double AwayExpectedGoals { get; init; }
+}
+
 public class MatchEngineService
 {
     // ==========================================
-    // SIMULATE A REALISTIC FOOTBALL MATCH
+    // PUBLIC SIMULATION METHOD
     // ==========================================
 
-    public (int HomeScore, int AwayScore) SimulateMatch(
+    public MatchEngineResult SimulateMatch(
         Team homeTeam,
         Team awayTeam)
     {
         ArgumentNullException.ThrowIfNull(homeTeam);
         ArgumentNullException.ThrowIfNull(awayTeam);
 
-        // Normalize club coefficients to a
-        // predictable 0-100 strength scale.
-        //
-        // Coefficients outside the expected range
-        // are clamped to avoid extreme results.
+        // ======================================
+        // CLUB STRENGTH
+        // ======================================
 
-        double homeStrength = NormalizeStrength(
-            homeTeam.Coefficient);
+        double homeStrength =
+            NormalizeStrength(homeTeam.Coefficient);
 
-        double awayStrength = NormalizeStrength(
-            awayTeam.Coefficient);
+        double awayStrength =
+            NormalizeStrength(awayTeam.Coefficient);
 
-        // ==========================================
-        // EXPECTED GOALS
-        // ==========================================
-
-        // Base scoring rates for home and away.
-        double homeExpectedGoals = 1.45;
-        double awayExpectedGoals = 1.15;
-
-        // Stronger teams create more chances.
-        // Positive difference benefits home team.
         double strengthDifference =
             (homeStrength - awayStrength) / 100.0;
 
-        homeExpectedGoals += strengthDifference * 1.2;
-        awayExpectedGoals -= strengthDifference * 1.0;
+        // ======================================
+        // EXPECTED GOALS
+        // ======================================
 
-        // Add a small home advantage.
-        homeExpectedGoals += 0.15;
+        double homeExpectedGoals =
+            1.60 + strengthDifference * 1.20;
 
-        // Keep expected goals within reasonable limits.
+        double awayExpectedGoals =
+            1.15 - strengthDifference * 1.00;
+
         homeExpectedGoals = Math.Clamp(
-            homeExpectedGoals,
-            0.15,
-            3.8);
+            homeExpectedGoals, 0.15, 3.80);
 
         awayExpectedGoals = Math.Clamp(
-            awayExpectedGoals,
-            0.15,
-            3.8);
+            awayExpectedGoals, 0.15, 3.80);
 
-        // ==========================================
-        // GENERATE SCORE USING POISSON MODEL
-        // ==========================================
+        // ======================================
+        // FINAL SCORE
+        // ======================================
 
-        int homeScore = GeneratePoissonGoals(
-            homeExpectedGoals);
+        int homeScore =
+            GeneratePoissonGoals(homeExpectedGoals);
 
-        int awayScore = GeneratePoissonGoals(
-            awayExpectedGoals);
+        int awayScore =
+            GeneratePoissonGoals(awayExpectedGoals);
 
-        return (homeScore, awayScore);
+        // ======================================
+        // BALL POSSESSION
+        // ======================================
+
+        int homePossession = Math.Clamp(
+            (int)Math.Round(
+                52 +
+                strengthDifference * 25 +
+                Random.Shared.Next(-9, 10)),
+            25,
+            75);
+
+        int awayPossession = 100 - homePossession;
+
+        // ======================================
+        // TOTAL SHOTS
+        // ======================================
+
+        int homeShots = Math.Clamp(
+            GeneratePoissonGoals(
+                9 + homeExpectedGoals * 3),
+            Math.Max(homeScore, 1),
+            35);
+
+        int awayShots = Math.Clamp(
+            GeneratePoissonGoals(
+                9 + awayExpectedGoals * 3),
+            Math.Max(awayScore, 1),
+            35);
+
+        // ======================================
+        // SHOTS ON TARGET
+        // ======================================
+
+        int homeShotsOnTarget = Math.Clamp(
+            GeneratePoissonGoals(
+                2 + homeExpectedGoals * 1.5),
+            homeScore,
+            homeShots);
+
+        int awayShotsOnTarget = Math.Clamp(
+            GeneratePoissonGoals(
+                2 + awayExpectedGoals * 1.5),
+            awayScore,
+            awayShots);
+
+        // ======================================
+        // CORNERS
+        // ======================================
+
+        int homeCorners = Math.Clamp(
+            GeneratePoissonGoals(
+                3 + homeShots * 0.15),
+            0,
+            18);
+
+        int awayCorners = Math.Clamp(
+            GeneratePoissonGoals(
+                3 + awayShots * 0.15),
+            0,
+            18);
+
+        // ======================================
+        // FOULS
+        // ======================================
+
+        int homeFouls = Random.Shared.Next(6, 21);
+        int awayFouls = Random.Shared.Next(6, 21);
+
+        // ======================================
+        // YELLOW CARDS
+        // ======================================
+
+        int homeYellowCards = Math.Clamp(
+            GeneratePoissonGoals(
+                homeFouls * 0.15),
+            0,
+            7);
+
+        int awayYellowCards = Math.Clamp(
+            GeneratePoissonGoals(
+                awayFouls * 0.15),
+            0,
+            7);
+
+        // ======================================
+        // RED CARDS
+        // ======================================
+
+        int homeRedCards =
+            Random.Shared.NextDouble() < 0.06
+                ? 1
+                : 0;
+
+        int awayRedCards =
+            Random.Shared.NextDouble() < 0.06
+                ? 1
+                : 0;
+
+        // ======================================
+        // RETURN COMPLETE MATCH RESULT
+        // ======================================
+
+        return new MatchEngineResult
+        {
+            HomeScore = homeScore,
+            AwayScore = awayScore,
+
+            HomePossession = homePossession,
+            AwayPossession = awayPossession,
+
+            HomeShots = homeShots,
+            AwayShots = awayShots,
+
+            HomeShotsOnTarget = homeShotsOnTarget,
+            AwayShotsOnTarget = awayShotsOnTarget,
+
+            HomeCorners = homeCorners,
+            AwayCorners = awayCorners,
+
+            HomeFouls = homeFouls,
+            AwayFouls = awayFouls,
+
+            HomeYellowCards = homeYellowCards,
+            AwayYellowCards = awayYellowCards,
+
+            HomeRedCards = homeRedCards,
+            AwayRedCards = awayRedCards,
+
+            HomeExpectedGoals =
+                Math.Round(homeExpectedGoals, 2),
+
+            AwayExpectedGoals =
+                Math.Round(awayExpectedGoals, 2)
+        };
     }
 
     // ==========================================
-    // NORMALIZE CLUB STRENGTH
+    // NORMALIZE CLUB COEFFICIENT
     // ==========================================
 
     private static double NormalizeStrength(
@@ -90,22 +245,23 @@ public class MatchEngineService
     // ==========================================
 
     private static int GeneratePoissonGoals(
-        double expectedGoals)
+        double expectedValue)
     {
-        // Knuth's algorithm for Poisson sampling.
-        double threshold = Math.Exp(-expectedGoals);
+        double threshold =
+            Math.Exp(-expectedValue);
 
-        int goals = 0;
+        int count = 0;
         double probability = 1.0;
 
         do
         {
-            goals++;
+            count++;
 
-            probability *= Random.Shared.NextDouble();
+            probability *=
+                Random.Shared.NextDouble();
         }
         while (probability > threshold);
 
-        return goals - 1;
+        return count - 1;
     }
 }

@@ -15,6 +15,7 @@ public class Match
     public Guid AwayTeamId { get; set; }
 
     public Team AwayTeam { get; set; } = null!;
+    public MatchStatistics? Statistics { get; set; }
 
     // Official kickoff time stored in UTC.
     // Nullable to preserve compatibility with older matches.
