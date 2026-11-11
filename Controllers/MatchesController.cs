@@ -1,9 +1,10 @@
 ﻿
+using System;
+using System.Linq;
 using System.Security.Claims;
-
+using System.Threading.Tasks;
 using ChampionsLeagueSimulatorAPI.Data;
 using ChampionsLeagueSimulatorAPI.DTOs;
-
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -67,7 +68,8 @@ public class MatchesController : ControllerBase
         {
             return Unauthorized(new
             {
-                message = "Invalid or expired authentication session."
+                message =
+                    "Invalid or expired authentication session."
             });
         }
 
@@ -79,8 +81,6 @@ public class MatchesController : ControllerBase
             });
         }
 
-        // Ensure the authenticated user owns
-        // the requested competition.
         if (!await OwnsCompetitionAsync(
                 competitionId,
                 userId.Value))
@@ -106,15 +106,19 @@ public class MatchesController : ControllerBase
         var result = matches.Select(m => new MatchDto
         {
             Id = m.Id,
+
             CompetitionId = m.CompetitionId,
+
             CompetitionName =
                 m.Competition?.Name ?? "Unknown",
 
             HomeTeamId = m.HomeTeamId,
+
             HomeTeamName =
                 m.HomeTeam?.Name ?? "Unknown",
 
             AwayTeamId = m.AwayTeamId,
+
             AwayTeamName =
                 m.AwayTeam?.Name ?? "Unknown",
 
@@ -128,6 +132,157 @@ public class MatchesController : ControllerBase
         }).ToList();
 
         return Ok(result);
+    }
+
+    // ==========================================
+    // GET COMPLETE MATCH DETAILS
+    // GET: api/Matches/{matchId}/details
+    // ==========================================
+
+    [HttpGet("{matchId:guid}/details")]
+    public async Task<IActionResult> GetMatchDetails(
+        Guid matchId)
+    {
+        var userId = GetCurrentUserId();
+
+        if (userId is null)
+        {
+            return Unauthorized(new
+            {
+                message =
+                    "Invalid or expired authentication session."
+            });
+        }
+
+        if (matchId == Guid.Empty)
+        {
+            return BadRequest(new
+            {
+                message = "Invalid match ID."
+            });
+        }
+
+        // Only retrieve a match belonging to
+        // a competition owned by this user.
+
+        var match = await _context.Matches
+            .AsNoTracking()
+            .Where(m =>
+                m.Id == matchId &&
+                m.Competition.OwnerId == userId.Value)
+            .Include(m => m.HomeTeam)
+            .Include(m => m.AwayTeam)
+            .Include(m => m.Competition)
+            .Include(m => m.Statistics)
+            .FirstOrDefaultAsync();
+
+        if (match is null)
+        {
+            return NotFound(new
+            {
+                message =
+                    "Match not found or access denied."
+            });
+        }
+
+        // ======================================
+        // BUILD STATISTICS RESPONSE
+        // ======================================
+
+        // Older matches and unplayed fixtures
+        // may not have statistics.
+
+        object? statistics = null;
+
+        if (match.Statistics is not null)
+        {
+            var s = match.Statistics;
+
+            statistics = new
+            {
+                s.HomePossession,
+                s.AwayPossession,
+
+                s.HomeShots,
+                s.AwayShots,
+
+                s.HomeShotsOnTarget,
+                s.AwayShotsOnTarget,
+
+                s.HomeCorners,
+                s.AwayCorners,
+
+                s.HomeFouls,
+                s.AwayFouls,
+
+                s.HomeYellowCards,
+                s.AwayYellowCards,
+
+                s.HomeRedCards,
+                s.AwayRedCards,
+
+                s.HomeExpectedGoals,
+                s.AwayExpectedGoals
+            };
+        }
+
+        // ======================================
+        // COMPLETE MATCH DETAILS RESPONSE
+        // ======================================
+
+        return Ok(new
+        {
+            MatchId = match.Id,
+
+            match.CompetitionId,
+
+            CompetitionName =
+                match.Competition?.Name ?? "Unknown",
+
+            match.MatchDay,
+            match.KickoffUtc,
+
+            match.IsPlayed,
+
+            match.HomeScore,
+            match.AwayScore,
+
+            HomeTeam = new
+            {
+                Id = match.HomeTeamId,
+
+                Name =
+                    match.HomeTeam?.Name ?? "Unknown",
+
+                Country =
+                    match.HomeTeam?.Country ?? "",
+
+                LogoUrl =
+                    match.HomeTeam?.LogoUrl,
+
+                Coefficient =
+                    match.HomeTeam?.Coefficient ?? 0m
+            },
+
+            AwayTeam = new
+            {
+                Id = match.AwayTeamId,
+
+                Name =
+                    match.AwayTeam?.Name ?? "Unknown",
+
+                Country =
+                    match.AwayTeam?.Country ?? "",
+
+                LogoUrl =
+                    match.AwayTeam?.LogoUrl,
+
+                Coefficient =
+                    match.AwayTeam?.Coefficient ?? 0m
+            },
+
+            Statistics = statistics
+        });
     }
 
     // ==========================================
@@ -147,7 +302,8 @@ public class MatchesController : ControllerBase
         {
             return Unauthorized(new
             {
-                message = "Invalid or expired authentication session."
+                message =
+                    "Invalid or expired authentication session."
             });
         }
 
@@ -167,9 +323,11 @@ public class MatchesController : ControllerBase
             });
         }
 
-        // Match must belong to a competition
-        // owned by the authenticated user.
+        // Match must belong to the
+        // authenticated user's competition.
+
         var match = await _context.Matches
+            .Include(m => m.Statistics)
             .FirstOrDefaultAsync(m =>
                 m.Id == matchId &&
                 m.Competition.OwnerId == userId.Value);
@@ -182,13 +340,39 @@ public class MatchesController : ControllerBase
             });
         }
 
+        // ======================================
+        // UPDATE FINAL SCORE
+        // ======================================
+
+        bool scoreChanged =
+            match.HomeScore != homeScore ||
+            match.AwayScore != awayScore;
+
         match.HomeScore = homeScore;
         match.AwayScore = awayScore;
         match.IsPlayed = true;
 
+        // ======================================
+        // CLEAR OUTDATED STATISTICS
+        // ======================================
+
+        // If an existing score is changed
+        // manually, previously simulated
+        // statistics no longer describe
+        // the updated result.
+
+        if (
+            scoreChanged &&
+            match.Statistics is not null)
+        {
+            _context.MatchStatistics.Remove(
+                match.Statistics);
+        }
+
         await _context.SaveChangesAsync();
 
-        // Preserve the original response format.
+        // Preserve the original response.
+
         return Ok(new
         {
             match.Id,
@@ -217,7 +401,8 @@ public class MatchesController : ControllerBase
         {
             return Unauthorized(new
             {
-                message = "Invalid or expired authentication session."
+                message =
+                    "Invalid or expired authentication session."
             });
         }
 
@@ -229,7 +414,8 @@ public class MatchesController : ControllerBase
             });
         }
 
-        // Verify ownership before deleting anything.
+        // Verify ownership before deletion.
+
         if (!await OwnsCompetitionAsync(
                 competitionId,
                 userId.Value))
@@ -255,6 +441,10 @@ public class MatchesController : ControllerBase
             });
         }
 
+        // Statistics are deleted automatically
+        // through the configured cascade
+        // relationship.
+
         _context.Matches.RemoveRange(matches);
 
         await _context.SaveChangesAsync();
@@ -263,7 +453,9 @@ public class MatchesController : ControllerBase
         {
             message =
                 "All matches for the competition have been deleted.",
+
             competitionId,
+
             deletedCount = matches.Count
         });
     }
