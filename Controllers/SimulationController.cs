@@ -1,5 +1,7 @@
 ﻿
+using System;
 using System.Security.Claims;
+using System.Threading.Tasks;
 
 using ChampionsLeagueSimulatorAPI.Data;
 using ChampionsLeagueSimulatorAPI.Services;
@@ -45,12 +47,10 @@ public class SimulationController : ControllerBase
     }
 
     // ==========================================
-    // SIMULATE OWN COMPETITION
-    // POST: api/Simulation/{competitionId}/simulate
+    // VERIFY COMPETITION OWNERSHIP
     // ==========================================
 
-    [HttpPost("{competitionId:guid}/simulate")]
-    public async Task<IActionResult> SimulateCompetition(
+    private async Task<IActionResult?> CheckAccess(
         Guid competitionId)
     {
         var userId = GetCurrentUserId();
@@ -59,7 +59,8 @@ public class SimulationController : ControllerBase
         {
             return Unauthorized(new
             {
-                message = "Invalid or expired authentication session."
+                message =
+                    "Invalid or expired authentication session."
             });
         }
 
@@ -71,9 +72,7 @@ public class SimulationController : ControllerBase
             });
         }
 
-        // Verify ownership before running
-        // any competition simulation.
-        var ownsCompetition = await _context.Competitions
+        bool ownsCompetition = await _context.Competitions
             .AsNoTracking()
             .AnyAsync(c =>
                 c.Id == competitionId &&
@@ -87,48 +86,185 @@ public class SimulationController : ControllerBase
             });
         }
 
+        return null;
+    }
+
+    // ==========================================
+    // SIMULATE SINGLE MATCH
+    //
+    // POST:
+    // api/Simulation/{competitionId}/matches/{matchId}/simulate
+    // ==========================================
+
+    [HttpPost(
+        "{competitionId:guid}/matches/{matchId:guid}/simulate")]
+    public async Task<IActionResult> SimulateMatch(
+        Guid competitionId,
+        Guid matchId)
+    {
+        var accessError = await CheckAccess(
+            competitionId);
+
+        if (accessError != null)
+        {
+            return accessError;
+        }
+
         try
         {
-            // Preserve the existing simulation service.
             var result = await _simulationService
-                .SimulateCompetition(competitionId);
+                .SimulateMatch(
+                    competitionId,
+                    matchId);
 
-            // Preserve the original response data.
             return Ok(result);
         }
-        catch (KeyNotFoundException)
+        catch (Exception ex)
+        {
+            return HandleSimulationError(
+                ex,
+                competitionId,
+                "single match");
+        }
+    }
+
+    // ==========================================
+    // SIMULATE MATCHDAY
+    //
+    // POST:
+    // api/Simulation/{competitionId}/matchdays/{matchday}/simulate
+    // ==========================================
+
+    [HttpPost(
+        "{competitionId:guid}/matchdays/{matchday:int}/simulate")]
+    public async Task<IActionResult> SimulateMatchday(
+        Guid competitionId,
+        int matchday)
+    {
+        var accessError = await CheckAccess(
+            competitionId);
+
+        if (accessError != null)
+        {
+            return accessError;
+        }
+
+        if (matchday < 1)
+        {
+            return BadRequest(new
+            {
+                message =
+                    "Matchday must be greater than zero."
+            });
+        }
+
+        try
+        {
+            var result = await _simulationService
+                .SimulateMatchday(
+                    competitionId,
+                    matchday);
+
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            return HandleSimulationError(
+                ex,
+                competitionId,
+                "matchday");
+        }
+    }
+
+    // ==========================================
+    // SIMULATE ALL REMAINING MATCHES
+    //
+    // POST:
+    // api/Simulation/{competitionId}/simulate
+    // ==========================================
+
+    [HttpPost("{competitionId:guid}/simulate")]
+    public async Task<IActionResult> SimulateCompetition(
+        Guid competitionId)
+    {
+        var accessError = await CheckAccess(
+            competitionId);
+
+        if (accessError != null)
+        {
+            return accessError;
+        }
+
+        try
+        {
+            var result = await _simulationService
+                .SimulateCompetition(
+                    competitionId);
+
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            return HandleSimulationError(
+                ex,
+                competitionId,
+                "competition");
+        }
+    }
+
+    // ==========================================
+    // SHARED ERROR HANDLING
+    // ==========================================
+
+    private IActionResult HandleSimulationError(
+        Exception ex,
+        Guid competitionId,
+        string simulationType)
+    {
+        if (ex is KeyNotFoundException)
         {
             return NotFound(new
             {
-                message = "Competition not found."
+                message = ex.Message
             });
         }
-        catch (ArgumentException ex)
+
+        if (ex is ArgumentException)
         {
             return BadRequest(new
             {
                 message = ex.Message
             });
         }
-        catch (InvalidOperationException ex)
+
+        if (ex is InvalidOperationException)
         {
             return Conflict(new
             {
                 message = ex.Message
             });
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(
-                ex,
-                "Competition simulation failed for {CompetitionId}",
-                competitionId);
 
-            return StatusCode(500, new
+        if (ex is DbUpdateConcurrencyException)
+        {
+            return Conflict(new
             {
                 message =
-                    "An unexpected error occurred while simulating the competition."
+                    "The match was updated by another request. " +
+                    "Refresh the fixtures and try again."
             });
         }
+
+        _logger.LogError(
+            ex,
+            "Failed to simulate {SimulationType} for competition {CompetitionId}",
+            simulationType,
+            competitionId);
+
+        return StatusCode(500, new
+        {
+            message =
+                "An unexpected error occurred during simulation."
+        });
     }
 }

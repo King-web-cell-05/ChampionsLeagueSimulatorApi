@@ -65,6 +65,7 @@ builder.Services.AddScoped<TableService>();
 builder.Services.AddScoped<DrawService>();
 builder.Services.AddScoped<SimulationService>();
 builder.Services.AddScoped<CompetitionService>();
+builder.Services.AddScoped<MatchEngineService>();
 
 // ==========================================
 // KNOCKOUT SERVICES
