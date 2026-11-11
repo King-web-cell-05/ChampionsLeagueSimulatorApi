@@ -1,15 +1,14 @@
-﻿
-using ChampionsLeagueSimulatorAPI.Data;
+﻿using ChampionsLeagueSimulatorAPI.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
-namespace ChampionsLeagueSimulatorAPI.Controllers.Admin;
+namespace ChampionsLeagueSimulatorAPI.Controllers;
 
 [ApiController]
 [Authorize(Roles = "Admin")]
 [Route("api/admin/competitions")]
-public class AdminCompetitionsController : ControllerBase
+public sealed class AdminCompetitionsController : ControllerBase
 {
     private readonly AppDbContext _context;
 
@@ -18,35 +17,40 @@ public class AdminCompetitionsController : ControllerBase
         _context = context;
     }
 
-    // GET: api/admin/competitions
+    // GET /api/admin/competitions?page=1&pageSize=10&search=...
     [HttpGet]
     public async Task<IActionResult> GetCompetitions(
-        [FromQuery] string? search,
         [FromQuery] int page = 1,
-        [FromQuery] int pageSize = 10)
+        [FromQuery] int pageSize = 10,
+        [FromQuery] string? search = null,
+        CancellationToken cancellationToken = default)
     {
-        page = Math.Max(1, page);
-        pageSize = Math.Clamp(pageSize, 1, 100);
+        if (page < 1 || pageSize < 1 || pageSize > 100)
+            return BadRequest(new { message = "Page must be at least 1 and pageSize must be between 1 and 100." });
 
-        var query = _context.Competitions
-            .AsNoTracking()
-            .AsQueryable();
+        var query = _context.Competitions.AsNoTracking();
+        var term = search?.Trim();
 
-        if (!string.IsNullOrWhiteSpace(search))
+        if (!string.IsNullOrEmpty(term))
         {
-            var term = search.Trim();
+            if (term.Length > 150)
+                return BadRequest(new { message = "Search must not exceed 150 characters." });
 
             query = query.Where(c =>
                 EF.Functions.ILike(c.Name, $"%{term}%") ||
-                EF.Functions.ILike(c.Season, $"%{term}%"));
+                EF.Functions.ILike(c.Season, $"%{term}%") ||
+                (c.Owner != null &&
+                    (EF.Functions.ILike(c.Owner.FullName, $"%{term}%") ||
+                     EF.Functions.ILike(c.Owner.Email, $"%{term}%"))));
         }
 
-        var totalCount = await query.CountAsync();
+        var totalCount = await query.CountAsync(cancellationToken);
+        var totalPages = (int)Math.Ceiling(totalCount / (double)pageSize);
 
-        var skip = Math.Min(
-            (long)(page - 1) * pageSize,
-            int.MaxValue
-        );
+        // Check overflow before computing the SQL offset.
+        var skip = ((long)page - 1) * pageSize;
+        if (skip > int.MaxValue)
+            return BadRequest(new { message = "Page number is too large." });
 
         var items = await query
             .OrderByDescending(c => c.CreatedDate)
@@ -58,44 +62,47 @@ public class AdminCompetitionsController : ControllerBase
                 c.Id,
                 c.Name,
                 c.Season,
-                c.OwnerId,
                 c.CreatedDate,
-
-                OwnerName = c.Owner != null
-                    ? c.Owner.FullName
-                    : null,
-
-                OwnerEmail = c.Owner != null
-                    ? c.Owner.Email
-                    : null,
-
-                ClubCount = _context.CompetitionTeams
-                    .Count(ct => ct.CompetitionId == c.Id),
-
-                TotalMatches = _context.Matches
-                    .Count(m => m.CompetitionId == c.Id),
-
-                PlayedMatches = _context.Matches
-                    .Count(m =>
-                        m.CompetitionId == c.Id &&
-                        m.IsPlayed)
+                c.OwnerId,
+                OwnerName = c.Owner != null ? c.Owner.FullName : null,
+                OwnerEmail = c.Owner != null ? c.Owner.Email : null,
+                TeamCount = _context.CompetitionTeams.Count(ct => ct.CompetitionId == c.Id),
+                MatchCount = _context.Matches.Count(m => m.CompetitionId == c.Id),
+                PlayedMatchCount = _context.Matches.Count(m => m.CompetitionId == c.Id && m.IsPlayed)
             })
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
+
+        return Ok(new { items, page, pageSize, totalCount, totalPages });
+    }
+
+    // GET /api/admin/competitions/stats
+    [HttpGet("stats")]
+    public async Task<IActionResult> GetStats(CancellationToken cancellationToken)
+    {
+        var totalCompetitions = await _context.Competitions.CountAsync(cancellationToken);
+        var totalCreators = await _context.Competitions
+            .Where(c => c.OwnerId != null)
+            .Select(c => c.OwnerId)
+            .Distinct()
+            .CountAsync(cancellationToken);
+        var totalParticipations = await _context.CompetitionTeams.CountAsync(cancellationToken);
+        var totalMatches = await _context.Matches.CountAsync(cancellationToken);
+        var playedMatches = await _context.Matches.CountAsync(m => m.IsPlayed, cancellationToken);
 
         return Ok(new
         {
-            items,
-            page,
-            pageSize,
-            totalCount,
-            totalPages = (int)Math.Ceiling(
-                totalCount / (double)pageSize)
+            totalCompetitions,
+            totalCreators,
+            totalParticipations,
+            totalMatches,
+            playedMatches,
+            pendingMatches = totalMatches - playedMatches
         });
     }
 
-    // GET: api/admin/competitions/{id}
+    // GET /api/admin/competitions/{id}
     [HttpGet("{id:guid}")]
-    public async Task<IActionResult> GetCompetition(Guid id)
+    public async Task<IActionResult> GetCompetition(Guid id, CancellationToken cancellationToken)
     {
         var competition = await _context.Competitions
             .AsNoTracking()
@@ -105,71 +112,47 @@ public class AdminCompetitionsController : ControllerBase
                 c.Id,
                 c.Name,
                 c.Season,
-                c.OwnerId,
                 c.CreatedDate,
-
-                OwnerName = c.Owner != null
-                    ? c.Owner.FullName
-                    : null,
-
-                OwnerEmail = c.Owner != null
-                    ? c.Owner.Email
-                    : null,
-
-                ClubCount = _context.CompetitionTeams
-                    .Count(ct => ct.CompetitionId == c.Id),
-
-                TotalMatches = _context.Matches
-                    .Count(m => m.CompetitionId == c.Id),
-
-                PlayedMatches = _context.Matches
-                    .Count(m =>
-                        m.CompetitionId == c.Id &&
-                        m.IsPlayed)
+                c.OwnerId,
+                OwnerName = c.Owner != null ? c.Owner.FullName : null,
+                OwnerEmail = c.Owner != null ? c.Owner.Email : null
             })
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync(cancellationToken);
 
         if (competition is null)
-        {
-            return NotFound(new
-            {
-                message = "Competition not found."
-            });
-        }
+            return NotFound(new { message = "Competition not found." });
 
-        return Ok(competition);
-    }
-
-    // GET: api/admin/competitions/{id}/clubs
-    [HttpGet("{id:guid}/clubs")]
-    public async Task<IActionResult> GetCompetitionClubs(Guid id)
-    {
-        var exists = await _context.Competitions
-            .AsNoTracking()
-            .AnyAsync(c => c.Id == id);
-
-        if (!exists)
-        {
-            return NotFound(new
-            {
-                message = "Competition not found."
-            });
-        }
-
-        var clubs = await _context.CompetitionTeams
+        var teams = await _context.CompetitionTeams
             .AsNoTracking()
             .Where(ct => ct.CompetitionId == id)
             .OrderBy(ct => ct.Team.Name)
             .Select(ct => new
             {
-                ct.Team.Id,
-                ct.Team.Name,
-                ct.Team.Country,
-                ct.Team.IsDefault,
-                ct.Team.LogoUrl
+                ct.TeamId,
+                TeamName = ct.Team.Name,
+                ct.GroupName
             })
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
 
-        return Ok(clubs);
+        var matchCount = await _context.Matches.CountAsync(m => m.CompetitionId == id, cancellationToken);
+        var playedMatchCount = await _context.Matches.CountAsync(m => m.CompetitionId == id && m.IsPlayed, cancellationToken);
+        var knockoutTieCount = await _context.KnockoutTies.CountAsync(t => t.CompetitionId == id, cancellationToken);
+
+        return Ok(new
+        {
+            competition.Id,
+            competition.Name,
+            competition.Season,
+            competition.CreatedDate,
+            competition.OwnerId,
+            competition.OwnerName,
+            competition.OwnerEmail,
+            teamCount = teams.Count,
+            teams,
+            matchCount,
+            playedMatchCount,
+            pendingMatchCount = matchCount - playedMatchCount,
+            knockoutTieCount
+        });
     }
 }
