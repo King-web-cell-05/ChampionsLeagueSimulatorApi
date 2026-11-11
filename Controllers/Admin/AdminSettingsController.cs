@@ -1,5 +1,7 @@
 ﻿
 using System.ComponentModel.DataAnnotations;
+using System.Data;
+using System.Globalization;
 using System.Security.Claims;
 
 using ChampionsLeagueSimulatorAPI.Data;
@@ -171,20 +173,69 @@ public sealed class AdminSettingsController : ControllerBase
             });
         }
 
-        var user = await _context.Users
-            .FirstOrDefaultAsync(
-                u => u.Id == userId.Value &&
-                     u.Role == "Admin" &&
-                     !u.IsSuspended,
+        // ======================================
+        // BEGIN DATABASE TRANSACTION
+        // ======================================
+
+        await using var transaction =
+            await _context.Database.BeginTransactionAsync(
+                IsolationLevel.ReadCommitted,
                 cancellationToken);
 
-        if (user is null)
+        // Lock the administrator row.
+        // This prevents concurrent password changes
+        // from overwriting each other.
+
+        var user = await _context.Users
+            .FromSqlInterpolated(
+                $"""
+                SELECT *
+                FROM "Users"
+                WHERE "Id" = {userId.Value}
+                FOR UPDATE
+                """)
+            .AsTracking()
+            .SingleOrDefaultAsync(cancellationToken);
+
+        if (user is null ||
+            user.Role != "Admin" ||
+            user.IsSuspended ||
+            !user.IsEmailVerified)
         {
             return StatusCode(403, new
             {
                 message = "Administrator account unavailable."
             });
         }
+
+        // ======================================
+        // REVALIDATE SESSION VERSION
+        // ======================================
+
+        // Authentication may have completed before
+        // another request changed the password.
+        // Recheck while holding the row lock.
+
+        var tokenVersionValue =
+            User.FindFirstValue("security_version");
+
+        if (!int.TryParse(
+                tokenVersionValue,
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out var tokenVersion) ||
+            tokenVersion != user.SecurityVersion)
+        {
+            return Unauthorized(new
+            {
+                message =
+                    "Session expired. Please sign in again."
+            });
+        }
+
+        // ======================================
+        // VERIFY CURRENT PASSWORD
+        // ======================================
 
         var verification =
             _passwordHasher.VerifyHashedPassword(
@@ -200,6 +251,10 @@ public sealed class AdminSettingsController : ControllerBase
             });
         }
 
+        // ======================================
+        // VALIDATE NEW PASSWORD
+        // ======================================
+
         if (request.CurrentPassword == request.NewPassword)
         {
             return BadRequest(new
@@ -209,17 +264,41 @@ public sealed class AdminSettingsController : ControllerBase
             });
         }
 
+        if (user.SecurityVersion == int.MaxValue)
+        {
+            throw new InvalidOperationException(
+                "Security version limit reached.");
+        }
+
+        // ======================================
+        // UPDATE PASSWORD HASH
+        // ======================================
+
         user.PasswordHash =
             _passwordHasher.HashPassword(
                 user,
                 request.NewPassword);
 
+        // ======================================
+        // REVOKE ALL PREVIOUS JWT SESSIONS
+        // ======================================
+
+        user.SecurityVersion++;
+
+        // ======================================
+        // SAVE CHANGES ATOMICALLY
+        // ======================================
+
         await _context.SaveChangesAsync(cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
 
         return Ok(new
         {
             message =
-                "Password changed successfully. Please sign in again."
+                "Password changed successfully. " +
+                "All previous sessions have been revoked. " +
+                "Please sign in again."
         });
     }
 

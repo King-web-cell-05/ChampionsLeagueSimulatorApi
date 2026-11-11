@@ -10,6 +10,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 
+using System.Globalization;
 using System.Security.Claims;
 using System.Threading.RateLimiting;
 
@@ -151,7 +152,7 @@ builder.Services
             };
 
         // ======================================
-        // VALIDATE CURRENT USER AGAINST DATABASE
+        // DATABASE-BACKED JWT VALIDATION
         // ======================================
 
         options.Events = new JwtBearerEvents
@@ -164,8 +165,20 @@ builder.Services
                 var tokenRole = context.Principal?
                     .FindFirstValue(ClaimTypes.Role);
 
-                if (!Guid.TryParse(userIdValue, out var userId) ||
-                    string.IsNullOrWhiteSpace(tokenRole))
+                var tokenVersionValue = context.Principal?
+                    .FindFirstValue("security_version");
+
+                // Validate required JWT claims.
+                if (!Guid.TryParse(
+                        userIdValue,
+                        out var userId) ||
+                    string.IsNullOrWhiteSpace(tokenRole) ||
+                    !int.TryParse(
+                        tokenVersionValue,
+                        NumberStyles.None,
+                        CultureInfo.InvariantCulture,
+                        out var tokenVersion) ||
+                    tokenVersion < 1)
                 {
                     context.Fail("Invalid account claims.");
                     return;
@@ -174,6 +187,7 @@ builder.Services
                 var db = context.HttpContext.RequestServices
                     .GetRequiredService<AppDbContext>();
 
+                // Retrieve the current account state.
                 var account = await db.Users
                     .AsNoTracking()
                     .Where(user => user.Id == userId)
@@ -181,21 +195,25 @@ builder.Services
                     {
                         user.Role,
                         user.IsSuspended,
-                        user.IsEmailVerified
+                        user.IsEmailVerified,
+                        user.SecurityVersion
                     })
                     .SingleOrDefaultAsync(
                         context.HttpContext.RequestAborted);
 
+                // Reject deleted, suspended, unverified,
+                // role-changed or revoked accounts.
                 if (account is null ||
                     account.IsSuspended ||
                     !account.IsEmailVerified ||
                     !string.Equals(
                         account.Role,
                         tokenRole,
-                        StringComparison.Ordinal))
+                        StringComparison.Ordinal) ||
+                    account.SecurityVersion != tokenVersion)
                 {
                     context.Fail(
-                        "Account access has changed.");
+                        "Account access has changed or session was revoked.");
                 }
             }
         };
@@ -268,7 +286,6 @@ builder.Services.AddRateLimiter(options =>
         StatusCodes.Status429TooManyRequests;
 
     // LOGIN: 5 requests per minute
-
     options.AddPolicy("auth-login", context =>
         RateLimitPartition.GetFixedWindowLimiter(
             partitionKey: GetClientPartition(context),
@@ -281,7 +298,6 @@ builder.Services.AddRateLimiter(options =>
             }));
 
     // REGISTER: 3 requests per 10 minutes
-
     options.AddPolicy("auth-register", context =>
         RateLimitPartition.GetFixedWindowLimiter(
             partitionKey: GetClientPartition(context),
@@ -294,7 +310,6 @@ builder.Services.AddRateLimiter(options =>
             }));
 
     // VERIFY EMAIL: 10 requests per 10 minutes
-
     options.AddPolicy("auth-verify", context =>
         RateLimitPartition.GetFixedWindowLimiter(
             partitionKey: GetClientPartition(context),
@@ -307,7 +322,6 @@ builder.Services.AddRateLimiter(options =>
             }));
 
     // RESEND CODE: 3 requests per 10 minutes
-
     options.AddPolicy("auth-resend", context =>
         RateLimitPartition.GetFixedWindowLimiter(
             partitionKey: GetClientPartition(context),
@@ -325,8 +339,8 @@ builder.Services.AddRateLimiter(options =>
 // ==========================================
 
 // Uses the direct connection IP.
-// Trusted forwarded headers must be configured
-// separately for the production hosting proxy.
+// Configure trusted forwarded headers separately
+// for your production reverse proxy.
 
 static string GetClientPartition(HttpContext context)
 {
@@ -351,6 +365,7 @@ builder.Services.AddSwaggerGen(options =>
     options.SwaggerDoc("v1", new OpenApiInfo
     {
         Title = "FootballSim API",
+
         Version = "v1",
 
         Description =
@@ -361,10 +376,7 @@ builder.Services.AddSwaggerGen(options =>
             "match simulation, and championship results."
     });
 
-    // ======================================
     // JWT BEARER SECURITY DEFINITION
-    // ======================================
-
     options.AddSecurityDefinition(
         JwtBearerDefaults.AuthenticationScheme,
         new OpenApiSecurityScheme
@@ -381,10 +393,7 @@ builder.Services.AddSwaggerGen(options =>
                 "the Bearer prefix to requests."
         });
 
-    // ======================================
     // JWT SECURITY REQUIREMENT
-    // ======================================
-
     options.AddSecurityRequirement(document =>
         new OpenApiSecurityRequirement
         {
@@ -393,6 +402,7 @@ builder.Services.AddSwaggerGen(options =>
                     JwtBearerDefaults.AuthenticationScheme,
                     document
                 ),
+
                 new List<string>()
             }
         });
@@ -424,8 +434,6 @@ var app = builder.Build();
 // GLOBAL EXCEPTION HANDLING
 // ==========================================
 
-// Keep detailed exception pages in development only.
-
 if (!app.Environment.IsDevelopment())
 {
     app.UseExceptionHandler(errorApp =>
@@ -443,8 +451,7 @@ if (!app.Environment.IsDevelopment())
                 {
                     title = "Internal Server Error",
                     status = 500,
-                    detail =
-                        "An unexpected error occurred."
+                    detail = "An unexpected error occurred."
                 });
         });
     });

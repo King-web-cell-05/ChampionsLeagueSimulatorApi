@@ -128,13 +128,25 @@ public class AppDbContext : DbContext
         // USER CONFIGURATION
         // ======================================
 
+
+        // ======================================
+        // USER CONFIGURATION
+        // ======================================
+
         modelBuilder.Entity<User>(entity =>
         {
             entity.HasKey(u => u.Id);
 
             entity.HasIndex(u => u.Email)
                 .IsUnique();
+
+            // JWT session revocation version.
+            // New users start at version 1.
+            entity.Property(u => u.SecurityVersion)
+                .IsRequired()
+                .HasDefaultValue(1);
         });
+
 
         // ======================================
         // NOTIFICATION CONFIGURATION
@@ -533,7 +545,7 @@ public class AppDbContext : DbContext
             })
             .IsUnique();
 
-            // KnockoutMatch -> KnockoutTie
+            // KnockoutMatch -> KnockoutTiemodelBuilder.Entity<User>(entity =>
 
             entity.HasOne(m => m.KnockoutTie)
                 .WithMany(t => t.Matches)

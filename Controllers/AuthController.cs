@@ -577,6 +577,7 @@ public class AuthController : ControllerBase
     // JWT GENERATION
     // ==========================================
 
+
     private string GenerateJwtToken(
         User user,
         DateTime expiresAtUtc)
@@ -604,22 +605,28 @@ public class AuthController : ControllerBase
 
         var claims = new[]
         {
-            new Claim(
-                ClaimTypes.NameIdentifier,
-                user.Id.ToString()),
+        new Claim(
+            ClaimTypes.NameIdentifier,
+            user.Id.ToString()),
 
-            new Claim(
-                ClaimTypes.Name,
-                user.FullName),
+        new Claim(
+            ClaimTypes.Name,
+            user.FullName),
 
-            new Claim(
-                ClaimTypes.Email,
-                user.Email),
+        new Claim(
+            ClaimTypes.Email,
+            user.Email),
 
-            new Claim(
-                ClaimTypes.Role,
-                user.Role)
-        };
+        new Claim(
+            ClaimTypes.Role,
+            user.Role),
+
+        // Session revocation version
+        new Claim(
+            "security_version",
+            user.SecurityVersion.ToString(
+                System.Globalization.CultureInfo.InvariantCulture))
+    };
 
         var token = new JwtSecurityToken(
             issuer: issuer,
