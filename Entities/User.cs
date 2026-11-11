@@ -36,6 +36,14 @@ public class User
     public DateTime? SuspendedAtUtc { get; set; }
 
     // ==========================================
+    // SESSION SECURITY
+    // ==========================================
+
+    // Increment to invalidate all previously
+    // issued JWTs for this account.
+    public int SecurityVersion { get; set; } = 1;
+
+    // ==========================================
     // EMAIL VERIFICATION
     // ==========================================
 

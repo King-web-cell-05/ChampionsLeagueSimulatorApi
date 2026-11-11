@@ -40,7 +40,17 @@ var jwtAudience = builder.Configuration["Jwt:Audience"]
     ?? throw new InvalidOperationException(
         "Jwt:Audience is missing.");
 
-var jwtKeyBytes = Convert.FromBase64String(jwtKeySetting);
+byte[] jwtKeyBytes;
+
+try
+{
+    jwtKeyBytes = Convert.FromBase64String(jwtKeySetting);
+}
+catch (FormatException)
+{
+    throw new InvalidOperationException(
+        "Jwt:Key must be a valid Base64-encoded value.");
+}
 
 if (jwtKeyBytes.Length < 32)
 {
@@ -54,7 +64,6 @@ if (jwtKeyBytes.Length < 32)
 
 builder.Services.AddControllers();
 
-// Access authenticated HTTP user in application services.
 builder.Services.AddHttpContextAccessor();
 
 // ==========================================
@@ -92,10 +101,8 @@ builder.Services.AddDbContext<AppDbContext>(options =>
         npgsqlOptions =>
         {
             npgsqlOptions.MigrationsAssembly(
-                typeof(AppDbContext).Assembly.GetName().Name
-            );
-        }
-    );
+                typeof(AppDbContext).Assembly.GetName().Name);
+        });
 });
 
 // ==========================================
@@ -114,6 +121,11 @@ builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
+        options.RequireHttpsMetadata =
+            !builder.Environment.IsDevelopment();
+
+        options.SaveToken = false;
+
         options.TokenValidationParameters =
             new TokenValidationParameters
             {
@@ -128,20 +140,27 @@ builder.Services
                     new SymmetricSecurityKey(jwtKeyBytes),
 
                 ValidateLifetime = true,
+
+                RequireExpirationTime = true,
+                RequireSignedTokens = true,
+
                 ClockSkew = TimeSpan.FromMinutes(1),
 
                 NameClaimType = ClaimTypes.Name,
                 RoleClaimType = ClaimTypes.Role
             };
 
-        // Validate the current account on every authenticated request.
-        // This revokes old tokens after suspension, deletion, or role changes.
+        // ======================================
+        // VALIDATE CURRENT USER AGAINST DATABASE
+        // ======================================
+
         options.Events = new JwtBearerEvents
         {
             OnTokenValidated = async context =>
             {
                 var userIdValue = context.Principal?
                     .FindFirstValue(ClaimTypes.NameIdentifier);
+
                 var tokenRole = context.Principal?
                     .FindFirstValue(ClaimTypes.Role);
 
@@ -167,12 +186,16 @@ builder.Services
                     .SingleOrDefaultAsync(
                         context.HttpContext.RequestAborted);
 
-                if (account is null || account.IsSuspended ||
+                if (account is null ||
+                    account.IsSuspended ||
                     !account.IsEmailVerified ||
-                    !string.Equals(account.Role, tokenRole,
+                    !string.Equals(
+                        account.Role,
+                        tokenRole,
                         StringComparison.Ordinal))
                 {
-                    context.Fail("Account access has changed.");
+                    context.Fail(
+                        "Account access has changed.");
                 }
             }
         };
@@ -188,12 +211,48 @@ builder.Services.AddAuthorization();
 // CORS CONFIGURATION
 // ==========================================
 
+var allowedOrigins = builder.Configuration
+    .GetSection("Cors:AllowedOrigins")
+    .Get<string[]>() ?? Array.Empty<string>();
+
+if (allowedOrigins.Length == 0)
+{
+    throw new InvalidOperationException(
+        "Cors:AllowedOrigins must contain at least one origin.");
+}
+
+foreach (var origin in allowedOrigins)
+{
+    if (!Uri.TryCreate(
+            origin,
+            UriKind.Absolute,
+            out var uri) ||
+        (uri.Scheme != Uri.UriSchemeHttp &&
+         uri.Scheme != Uri.UriSchemeHttps) ||
+        uri.AbsolutePath != "/" ||
+        !string.IsNullOrEmpty(uri.Query) ||
+        !string.IsNullOrEmpty(uri.Fragment) ||
+        !string.IsNullOrEmpty(uri.UserInfo) ||
+        origin.EndsWith("/"))
+    {
+        throw new InvalidOperationException(
+            $"Invalid CORS origin: {origin}");
+    }
+
+    if (!builder.Environment.IsDevelopment() &&
+        uri.Scheme != Uri.UriSchemeHttps)
+    {
+        throw new InvalidOperationException(
+            "Production CORS origins must use HTTPS.");
+    }
+}
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("Frontend", policy =>
     {
         policy
-            .WithOrigins("http://localhost:3000")
+            .WithOrigins(allowedOrigins)
             .AllowAnyHeader()
             .AllowAnyMethod();
     });
@@ -209,6 +268,7 @@ builder.Services.AddRateLimiter(options =>
         StatusCodes.Status429TooManyRequests;
 
     // LOGIN: 5 requests per minute
+
     options.AddPolicy("auth-login", context =>
         RateLimitPartition.GetFixedWindowLimiter(
             partitionKey: GetClientPartition(context),
@@ -221,6 +281,7 @@ builder.Services.AddRateLimiter(options =>
             }));
 
     // REGISTER: 3 requests per 10 minutes
+
     options.AddPolicy("auth-register", context =>
         RateLimitPartition.GetFixedWindowLimiter(
             partitionKey: GetClientPartition(context),
@@ -233,6 +294,7 @@ builder.Services.AddRateLimiter(options =>
             }));
 
     // VERIFY EMAIL: 10 requests per 10 minutes
+
     options.AddPolicy("auth-verify", context =>
         RateLimitPartition.GetFixedWindowLimiter(
             partitionKey: GetClientPartition(context),
@@ -245,6 +307,7 @@ builder.Services.AddRateLimiter(options =>
             }));
 
     // RESEND CODE: 3 requests per 10 minutes
+
     options.AddPolicy("auth-resend", context =>
         RateLimitPartition.GetFixedWindowLimiter(
             partitionKey: GetClientPartition(context),
@@ -257,14 +320,25 @@ builder.Services.AddRateLimiter(options =>
             }));
 });
 
-// Uses the direct client IP.
-// Configure trusted forwarded headers separately
-// if deploying behind a reverse proxy.
+// ==========================================
+// CLIENT RATE LIMIT PARTITION
+// ==========================================
+
+// Uses the direct connection IP.
+// Trusted forwarded headers must be configured
+// separately for the production hosting proxy.
+
 static string GetClientPartition(HttpContext context)
 {
     return context.Connection.RemoteIpAddress?
         .ToString() ?? "unknown";
 }
+
+// ==========================================
+// HEALTH CHECKS
+// ==========================================
+
+builder.Services.AddHealthChecks();
 
 // ==========================================
 // SWAGGER CONFIGURATION
@@ -277,7 +351,6 @@ builder.Services.AddSwaggerGen(options =>
     options.SwaggerDoc("v1", new OpenApiInfo
     {
         Title = "FootballSim API",
-
         Version = "v1",
 
         Description =
@@ -310,8 +383,6 @@ builder.Services.AddSwaggerGen(options =>
 
     // ======================================
     // JWT SECURITY REQUIREMENT
-    // Swashbuckle 10.1.3
-    // Microsoft.OpenApi 2.7.5
     // ======================================
 
     options.AddSecurityRequirement(document =>
@@ -322,16 +393,18 @@ builder.Services.AddSwaggerGen(options =>
                     JwtBearerDefaults.AuthenticationScheme,
                     document
                 ),
-
                 new List<string>()
             }
         });
 });
 
+// ==========================================
+// TEAM LOGO UPLOAD DIRECTORY
+// ==========================================
+
 var webRootPath = Path.Combine(
     builder.Environment.ContentRootPath,
-    "wwwroot"
-);
+    "wwwroot");
 
 Directory.CreateDirectory(webRootPath);
 
@@ -339,10 +412,7 @@ Directory.CreateDirectory(
     Path.Combine(
         webRootPath,
         "uploads",
-        "team-logos"
-    )
-);
-
+        "team-logos"));
 
 // ==========================================
 // BUILD APPLICATION
@@ -350,35 +420,104 @@ Directory.CreateDirectory(
 
 var app = builder.Build();
 
-
-
 // ==========================================
-// SWAGGER MIDDLEWARE
+// GLOBAL EXCEPTION HANDLING
 // ==========================================
 
-app.UseSwagger();
+// Keep detailed exception pages in development only.
 
-app.UseSwaggerUI(options =>
+if (!app.Environment.IsDevelopment())
 {
-    options.SwaggerEndpoint(
-        "/swagger/v1/swagger.json",
-        "FootballSim API v1");
+    app.UseExceptionHandler(errorApp =>
+    {
+        errorApp.Run(async context =>
+        {
+            context.Response.StatusCode =
+                StatusCodes.Status500InternalServerError;
 
-    options.DocumentTitle =
-        "FootballSim API Documentation";
+            context.Response.ContentType =
+                "application/problem+json";
 
-    options.DisplayRequestDuration();
+            await context.Response.WriteAsJsonAsync(
+                new
+                {
+                    title = "Internal Server Error",
+                    status = 500,
+                    detail =
+                        "An unexpected error occurred."
+                });
+        });
+    });
 
-    options.EnableDeepLinking();
+    app.UseHsts();
+}
+
+// ==========================================
+// SECURITY HEADERS
+// ==========================================
+
+app.Use(async (context, next) =>
+{
+    context.Response.OnStarting(() =>
+    {
+        context.Response.Headers["X-Content-Type-Options"] =
+            "nosniff";
+
+        context.Response.Headers["X-Frame-Options"] =
+            "DENY";
+
+        context.Response.Headers["Referrer-Policy"] =
+            "strict-origin-when-cross-origin";
+
+        return Task.CompletedTask;
+    });
+
+    await next(context);
 });
+
+// ==========================================
+// SWAGGER - DEVELOPMENT ONLY
+// ==========================================
+
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+
+    app.UseSwaggerUI(options =>
+    {
+        options.SwaggerEndpoint(
+            "/swagger/v1/swagger.json",
+            "FootballSim API v1");
+
+        options.DocumentTitle =
+            "FootballSim API Documentation";
+
+        options.DisplayRequestDuration();
+        options.EnableDeepLinking();
+    });
+}
 
 // ==========================================
 // HTTPS REDIRECTION
 // ==========================================
 
-app.UseHttpsRedirection();
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
+
+// ==========================================
+// STATIC FILES
+// ==========================================
 
 app.UseStaticFiles();
+
+// ==========================================
+// ROUTING
+// ==========================================
+
+app.UseRouting();
+
 // ==========================================
 // CORS
 // ==========================================
@@ -389,20 +528,28 @@ app.UseCors("Frontend");
 // RATE LIMITING
 // ==========================================
 
-app.UseRouting();
-
 app.UseRateLimiter();
 
 // ==========================================
-// AUTHENTICATION & AUTHORIZATION
+// AUTHENTICATION
 // ==========================================
 
 app.UseAuthentication();
 
+// ==========================================
+// AUTHORIZATION
+// ==========================================
+
 app.UseAuthorization();
 
 // ==========================================
-// MAP CONTROLLERS
+// HEALTH CHECK ENDPOINT
+// ==========================================
+
+app.MapHealthChecks("/health");
+
+// ==========================================
+// API CONTROLLERS
 // ==========================================
 
 app.MapControllers();
