@@ -20,6 +20,22 @@ public class User
     public string PasswordHash { get; set; } = string.Empty;
 
     // ==========================================
+    // ACCOUNT ROLE
+    // ==========================================
+
+    [Required]
+    [MaxLength(20)]
+    public string Role { get; set; } = "User";
+
+    // ==========================================
+    // ACCOUNT STATUS
+    // ==========================================
+
+    public bool IsSuspended { get; set; } = false;
+
+    public DateTime? SuspendedAtUtc { get; set; }
+
+    // ==========================================
     // EMAIL VERIFICATION
     // ==========================================
 

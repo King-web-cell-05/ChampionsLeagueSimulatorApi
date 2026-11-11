@@ -133,6 +133,49 @@ builder.Services
                 NameClaimType = ClaimTypes.Name,
                 RoleClaimType = ClaimTypes.Role
             };
+
+        // Validate the current account on every authenticated request.
+        // This revokes old tokens after suspension, deletion, or role changes.
+        options.Events = new JwtBearerEvents
+        {
+            OnTokenValidated = async context =>
+            {
+                var userIdValue = context.Principal?
+                    .FindFirstValue(ClaimTypes.NameIdentifier);
+                var tokenRole = context.Principal?
+                    .FindFirstValue(ClaimTypes.Role);
+
+                if (!Guid.TryParse(userIdValue, out var userId) ||
+                    string.IsNullOrWhiteSpace(tokenRole))
+                {
+                    context.Fail("Invalid account claims.");
+                    return;
+                }
+
+                var db = context.HttpContext.RequestServices
+                    .GetRequiredService<AppDbContext>();
+
+                var account = await db.Users
+                    .AsNoTracking()
+                    .Where(user => user.Id == userId)
+                    .Select(user => new
+                    {
+                        user.Role,
+                        user.IsSuspended,
+                        user.IsEmailVerified
+                    })
+                    .SingleOrDefaultAsync(
+                        context.HttpContext.RequestAborted);
+
+                if (account is null || account.IsSuspended ||
+                    !account.IsEmailVerified ||
+                    !string.Equals(account.Role, tokenRole,
+                        StringComparison.Ordinal))
+                {
+                    context.Fail("Account access has changed.");
+                }
+            }
+        };
     });
 
 // ==========================================

@@ -90,6 +90,8 @@ public class AuthController : ControllerBase
             FullName = request.FullName.Trim(),
             Email = email,
             IsEmailVerified = false,
+            Role = "User", // Public registration can never assign Admin.
+            IsSuspended = false,
             CreatedAtUtc = DateTime.UtcNow,
             EmailVerificationFailedAttempts = 0,
             EmailVerificationResendCount = 0
@@ -446,6 +448,15 @@ public class AuthController : ControllerBase
             });
         }
 
+        if (user.IsSuspended)
+        {
+            return StatusCode(403, new
+            {
+                message =
+                    "This account is currently unavailable. Please contact support."
+            });
+        }
+
         if (!user.IsEmailVerified)
         {
             return StatusCode(403, new
@@ -603,7 +614,11 @@ public class AuthController : ControllerBase
 
             new Claim(
                 ClaimTypes.Email,
-                user.Email)
+                user.Email),
+
+            new Claim(
+                ClaimTypes.Role,
+                user.Role)
         };
 
         var token = new JwtSecurityToken(
