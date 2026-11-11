@@ -13,15 +13,10 @@ public class AdminCompetitionsController : ControllerBase
 {
     private readonly AppDbContext _context;
 
-    public AdminCompetitionsController(
-        AppDbContext context)
+    public AdminCompetitionsController(AppDbContext context)
     {
         _context = context;
     }
-
-    // ==========================================
-    // GET ALL PLATFORM COMPETITIONS
-    // ==========================================
 
     // GET: api/admin/competitions
     [HttpGet]
@@ -37,7 +32,6 @@ public class AdminCompetitionsController : ControllerBase
             .AsNoTracking()
             .AsQueryable();
 
-        // Search by competition name or season.
         if (!string.IsNullOrWhiteSpace(search))
         {
             var term = search.Trim();
@@ -49,13 +43,15 @@ public class AdminCompetitionsController : ControllerBase
 
         var totalCount = await query.CountAsync();
 
-        // Prevent integer overflow in pagination.
-        var skip = (long)(page - 1) * pageSize;
+        var skip = Math.Min(
+            (long)(page - 1) * pageSize,
+            int.MaxValue
+        );
 
         var items = await query
             .OrderByDescending(c => c.CreatedDate)
             .ThenBy(c => c.Id)
-            .Skip((int)Math.Min(skip, int.MaxValue))
+            .Skip((int)skip)
             .Take(pageSize)
             .Select(c => new
             {
@@ -74,12 +70,10 @@ public class AdminCompetitionsController : ControllerBase
                     : null,
 
                 ClubCount = _context.CompetitionTeams
-                    .Count(ct =>
-                        ct.CompetitionId == c.Id),
+                    .Count(ct => ct.CompetitionId == c.Id),
 
                 TotalMatches = _context.Matches
-                    .Count(m =>
-                        m.CompetitionId == c.Id),
+                    .Count(m => m.CompetitionId == c.Id),
 
                 PlayedMatches = _context.Matches
                     .Count(m =>
@@ -99,14 +93,9 @@ public class AdminCompetitionsController : ControllerBase
         });
     }
 
-    // ==========================================
-    // GET COMPETITION DETAILS
-    // ==========================================
-
     // GET: api/admin/competitions/{id}
     [HttpGet("{id:guid}")]
-    public async Task<IActionResult> GetCompetition(
-        Guid id)
+    public async Task<IActionResult> GetCompetition(Guid id)
     {
         var competition = await _context.Competitions
             .AsNoTracking()
@@ -128,12 +117,10 @@ public class AdminCompetitionsController : ControllerBase
                     : null,
 
                 ClubCount = _context.CompetitionTeams
-                    .Count(ct =>
-                        ct.CompetitionId == c.Id),
+                    .Count(ct => ct.CompetitionId == c.Id),
 
                 TotalMatches = _context.Matches
-                    .Count(m =>
-                        m.CompetitionId == c.Id),
+                    .Count(m => m.CompetitionId == c.Id),
 
                 PlayedMatches = _context.Matches
                     .Count(m =>
@@ -153,14 +140,9 @@ public class AdminCompetitionsController : ControllerBase
         return Ok(competition);
     }
 
-    // ==========================================
-    // GET COMPETITION CLUBS
-    // ==========================================
-
     // GET: api/admin/competitions/{id}/clubs
     [HttpGet("{id:guid}/clubs")]
-    public async Task<IActionResult> GetCompetitionClubs(
-        Guid id)
+    public async Task<IActionResult> GetCompetitionClubs(Guid id)
     {
         var exists = await _context.Competitions
             .AsNoTracking()
@@ -183,7 +165,8 @@ public class AdminCompetitionsController : ControllerBase
                 ct.Team.Id,
                 ct.Team.Name,
                 ct.Team.Country,
-                ct.Team.IsDefault
+                ct.Team.IsDefault,
+                ct.Team.LogoUrl
             })
             .ToListAsync();
 
