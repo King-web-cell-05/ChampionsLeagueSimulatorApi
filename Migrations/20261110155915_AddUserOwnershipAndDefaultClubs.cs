@@ -17,6 +17,10 @@ namespace ChampionsLeagueSimulatorApi.Migrations
             migrationBuilder.Sql("""
                 DO $$
                 BEGIN
+                    -- Existing local data must match the original, verified dataset.
+                    -- Fresh production databases may have no teams or competitions.
+                    IF EXISTS (SELECT 1 FROM "Teams")
+                       OR EXISTS (SELECT 1 FROM "Competitions") THEN
                     IF (SELECT COUNT(*) FROM "Teams") <> 37 THEN
                         RAISE EXCEPTION
                             'Expected exactly 37 existing clubs.';
@@ -62,6 +66,8 @@ namespace ChampionsLeagueSimulatorApi.Migrations
                     ) THEN
                         RAISE EXCEPTION
                             'Expected Swagger test competition was not found.';
+                    END IF;
+
                     END IF;
 
                     IF EXISTS (
@@ -193,6 +199,8 @@ namespace ChampionsLeagueSimulatorApi.Migrations
             migrationBuilder.Sql("""
                 DO $$
                 BEGIN
+                    -- The exact counts are only meaningful for the existing local dataset.
+                    IF EXISTS (SELECT 1 FROM "Teams") THEN
                     IF (
                         SELECT COUNT(*) FROM "Teams"
                         WHERE "IsDefault" = TRUE
@@ -210,6 +218,8 @@ namespace ChampionsLeagueSimulatorApi.Migrations
                     ) <> 1 THEN
                         RAISE EXCEPTION
                             'Private Chelsea ownership assignment failed.';
+                    END IF;
+
                     END IF;
 
                     IF EXISTS (
